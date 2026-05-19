@@ -80,8 +80,16 @@ private struct OpenSaveView: View {
     @State private var tab: EditorTab = .character
 
     var body: some View {
+        // DEBUG MARKER v0.3 — if this banner is not visible, the build is
+        // still serving stale OpenSaveView code (clean DerivedData and rebuild).
         VStack(spacing: 0) {
-            // Pending edits banner (only when there are unsaved edits)
+            Text("editor v0.3 — tab: \(tab.rawValue)")
+                .font(.caption)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(4)
+                .background(Color.red)
+
             if !open.pendingEdits.isEmpty {
                 HStack(spacing: 12) {
                     Image(systemName: "pencil.tip.crop.circle")
@@ -97,28 +105,18 @@ private struct OpenSaveView: View {
                 .background(Color.accentColor.opacity(0.12))
             }
 
-            // Tab strip — segmented picker pinned below the banner. We use a
-            // manual Picker instead of TabView because macOS TabView with
-            // table content has chronic layout issues where the Table grows
-            // unbounded and pushes the tab bar (and any chrome above it)
-            // off the top of the window.
-            HStack {
-                Picker("View", selection: $tab) {
-                    Text("Character").tag(EditorTab.character)
-                    Text("World Flags").tag(EditorTab.flags)
-                    Text("Pending (\(open.pendingEdits.count))").tag(EditorTab.pending)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 540)
-                Spacer()
+            Picker("", selection: $tab) {
+                Text("Character").tag(EditorTab.character)
+                Text("World Flags").tag(EditorTab.flags)
+                Text("Pending (\(open.pendingEdits.count))").tag(EditorTab.pending)
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
             Divider()
 
-            // Active tab content fills the rest.
             Group {
                 switch tab {
                 case .character:
