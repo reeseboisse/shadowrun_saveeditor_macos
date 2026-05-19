@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        The save editor needs to read and write save files under
+        ~/Library/Application Support, and spawn a Python subprocess that
+        does the protobuf parsing. App Sandbox is disabled because
+        sandboxed apps can't spawn arbitrary interpreters with
+        controllable PATH and can't reach the Library folder of other
+        Harebrained Schemes apps.
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>

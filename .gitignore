@@ -9,3 +9,10 @@ build/
 dist/
 *.bak
 .DS_Store
+
+# xcodegen-generated project files and Xcode build artifacts
+macos/ShadowrunEditor.xcodeproj/
+macos/build/
+macos/DerivedData/
+*.xcuserstate
+xcuserdata/

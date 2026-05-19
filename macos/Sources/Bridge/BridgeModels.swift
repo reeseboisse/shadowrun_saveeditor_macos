@@ -1,0 +1,195 @@
+//
+//  BridgeModels.swift
+//
+//  Codable mirrors of the Python service.py dataclasses. The JSON-RPC
+//  bridge serializes those dataclasses with dataclasses.asdict, so the
+//  field names here match the Python field names exactly.
+//
+
+import Foundation
+
+// MARK: - Save list
+
+struct SaveSummary: Codable, Identifiable, Hashable {
+    var uuid: String
+    var folder: String
+    var sav_path: String
+    var thumbnail_path: String?
+    var game: String
+    var supported: Bool
+    var display_name: String?
+    var char_name: String?
+    var time_utc: Int64?
+    var scene_name: String?
+
+    var id: String { sav_path }
+
+    var gameDisplayName: String {
+        switch game {
+        case "dragonfall": return "Shadowrun: Dragonfall — Director's Cut"
+        case "returns":    return "Shadowrun Returns"
+        case "hongkong":   return "Shadowrun: Hong Kong"
+        default:            return "Shadowrun (unknown variant)"
+        }
+    }
+
+    var saveDate: Date? {
+        guard let t = time_utc else { return nil }
+        // The game stores .NET DateTime.Ticks (100-ns intervals since
+        // 0001-01-01). Convert to a Unix Date.
+        let unixTicks: Int64 = 621355968000000000
+        let secondsSinceEpoch = Double(t - unixTicks) / 1e7
+        return Date(timeIntervalSince1970: secondsSinceEpoch)
+    }
+}
+
+// MARK: - Character editor view model
+
+struct CharacterView: Codable, Hashable {
+    var name: String?
+    var prefab: String?
+    var archetype: String?
+    var portrait_code: String?
+    var karma: Int?
+    var unspent_karma: Int?
+    var nuyen: Int?
+    var attributes: [String: Int]
+    var skills: [String: Int]
+    var etiquettes: [String: Int]
+    var snapshot_count: Int
+}
+
+// MARK: - World flags
+
+/// A world flag's value can be any of int / bool / float / string. To keep
+/// the Codable surface ergonomic we model that as a tagged enum and
+/// decode `value` based on `kind`.
+enum WorldFlagValue: Hashable {
+    case int(Int)
+    case bool(Bool)
+    case double(Double)
+    case string(String)
+    case empty
+}
+
+struct WorldFlagView: Codable, Identifiable, Hashable {
+    var name: String
+    var kind: String
+    var value: WorldFlagValue
+    var scope_name: String?
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, kind, value, scope_name
+    }
+
+    init(name: String, kind: String, value: WorldFlagValue, scope_name: String?) {
+        self.name = name; self.kind = kind; self.value = value; self.scope_name = scope_name
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(String.self, forKey: .kind)
+        scope_name = try c.decodeIfPresent(String.self, forKey: .scope_name)
+        switch kind {
+        case "int":    value = .int(try c.decode(Int.self, forKey: .value))
+        case "bool":   value = .bool(try c.decode(Bool.self, forKey: .value))
+        case "float":  value = .double(try c.decode(Double.self, forKey: .value))
+        case "string": value = .string(try c.decode(String.self, forKey: .value))
+        default:       value = .empty
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(scope_name, forKey: .scope_name)
+        switch value {
+        case .int(let v):    try c.encode(v, forKey: .value)
+        case .bool(let v):   try c.encode(v, forKey: .value)
+        case .double(let v): try c.encode(v, forKey: .value)
+        case .string(let v): try c.encode(v, forKey: .value)
+        case .empty:         try c.encodeNil(forKey: .value)
+        }
+    }
+
+    var displayValue: String {
+        switch value {
+        case .int(let v):    return String(v)
+        case .bool(let v):   return v ? "true" : "false"
+        case .double(let v): return String(v)
+        case .string(let v): return "\"\(v)\""
+        case .empty:         return "—"
+        }
+    }
+}
+
+// MARK: - Pending edits
+
+struct PendingEdit: Codable, Identifiable, Hashable {
+    var op: String
+    var description: String
+
+    var id: String { description }
+
+    enum CodingKeys: String, CodingKey {
+        case op, description, args
+    }
+
+    init(op: String, description: String) {
+        self.op = op
+        self.description = description
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        op = try c.decode(String.self, forKey: .op)
+        description = try c.decode(String.self, forKey: .description)
+        // `args` is opaque to the UI; we don't decode it
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(op, forKey: .op)
+        try c.encode(description, forKey: .description)
+    }
+}
+
+// MARK: - Bridge response shape
+
+struct OpenSaveResponse: Codable {
+    var handle: Int
+    var summary: SaveSummary
+    var character: CharacterView?
+    var world_flags: [WorldFlagView]
+    var pending_edits: [PendingEdit]
+    var diff: [String]
+}
+
+struct RefreshResponse: Codable {
+    var summary: SaveSummary
+    var character: CharacterView?
+    var world_flags: [WorldFlagView]
+    var pending_edits: [PendingEdit]
+    var diff: [String]
+}
+
+struct CommitResponse: Codable {
+    var written: [String]
+    var summary: SaveSummary
+    var character: CharacterView?
+    var world_flags: [WorldFlagView]
+    var pending_edits: [PendingEdit]
+    var diff: [String]
+}
+
+struct ScanResponse: Codable {
+    var saves: [SaveSummary]
+}
+
+struct DiscoverResponse: Codable {
+    var folders: [String: [String]]
+}

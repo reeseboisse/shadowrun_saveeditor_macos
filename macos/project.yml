@@ -1,0 +1,52 @@
+# xcodegen project specification.
+#
+# Materialize the .xcodeproj on macOS with:
+#   brew install xcodegen
+#   cd macos && xcodegen
+#
+# Then open `ShadowrunEditor.xcodeproj` in Xcode and Build & Run.
+
+name: ShadowrunEditor
+
+options:
+  bundleIdPrefix: com.harebrained.saveeditor
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_IDENTITY: "-"          # ad-hoc sign for local dev
+    DEVELOPMENT_TEAM: ""             # set if you have an Apple Developer ID
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+targets:
+  ShadowrunEditor:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Sources
+    resources:
+      - path: Resources
+        optional: true
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: "Shadowrun Save Editor"
+        CFBundleDisplayName: "Shadowrun Save Editor"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "13.0"
+        NSHumanReadableCopyright: "Save editor for the Shadowrun trilogy"
+        # The app reads/writes save files under ~/Library/Application Support
+        # which is allowed for non-sandboxed apps without entitlements.
+    settings:
+      base:
+        PRODUCT_NAME: "Shadowrun Save Editor"
+        PRODUCT_BUNDLE_IDENTIFIER: com.harebrained.saveeditor.app
+        CODE_SIGN_ENTITLEMENTS: App/ShadowrunEditor.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO

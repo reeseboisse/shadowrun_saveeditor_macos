@@ -23,6 +23,17 @@ same-width (etiquette tag flip) and width-growing (karma 1B→3B varint,
 with cascading length-prefix recomputation up the message tree)
 re-serialize to valid protobuf that parses back to the expected state.
 
+**Phase 2 in progress** — SwiftUI macOS frontend (Xcode project via
+xcodegen) wired up to the Python engine over a JSON-RPC stdio bridge.
+The bridge has been built and tested in isolation here; the Swift sources
+live under [macos/](macos/) and need to be built on a real macOS
+machine. Two-tier UI: rich character editor (steppers, dropdowns, grouped
+skills) and a basic world-flags list (flat searchable table + filter
+chips + warning banner). The save-slot picker is game-neutral — it lists
+saves from all three games even though only Dragonfall edits are
+functional, with a "support arrives in Phase N" placeholder for the
+others.
+
 ## Layout
 
 ```
@@ -31,6 +42,8 @@ src/shadowrun_editor/
 ├── extractor.py             # DLL → JSON schema bundle
 ├── schema.py                # Bundle loader
 ├── savefile.py              # Save folder scan, game detection, atomic write
+├── service.py               # High-level SaveSession API (GUI surface)
+├── bridge.py                # JSON-RPC over stdio (frontend transport)
 ├── cli.py                   # `shadowrun-editor` command
 └── domain/
     └── dragonfall.py        # Dragonfall semantic operations
@@ -38,9 +51,20 @@ schemas/
 ├── dragonfall.json          # Extracted schema bundles
 ├── returns.json
 └── hongkong.json
+macos/                       # SwiftUI frontend (build on macOS, see macos/README.md)
+├── project.yml              # xcodegen project spec
+├── Makefile                 # setup / project / build / run
+├── App/                     # @main entry + Info.plist + entitlements
+├── Sources/
+│   ├── Bridge/              # subprocess + Codable models
+│   ├── Models/              # EditorState observable
+│   └── Views/               # RootView, picker, character editor, flags list
+└── scripts/setup.sh         # creates ~/.shadowrun-editor/venv
 tests/
 ├── test_engine_roundtrip.py # Byte-exact parse → serialize for every save
-└── test_edits.py            # Edit-then-reparse integrity
+├── test_edits.py            # Edit-then-reparse integrity
+├── test_service.py          # SaveSession lifecycle, queue / commit / undo
+└── test_bridge.py           # JSON-RPC end-to-end via dispatch() + stdio loop
 reference/                   # DLLs + example saves + original prototype
 ```
 
@@ -118,7 +142,20 @@ Kong (156 / 1534 / 240).
   game can't pick up a stale one when reloading a previously visited
   scene.
 
+## macOS GUI (Phase 2)
+
+See [macos/README.md](macos/README.md) for the full build flow. The short
+version on a Mac:
+
+```sh
+cd macos
+make setup     # creates ~/.shadowrun-editor/venv with the engine installed
+make project   # runs xcodegen to materialize the .xcodeproj
+make run       # builds and launches the app
+```
+
 ## Next phase
 
-Phase 2 (macOS GUI for Dragonfall) per the plan §9. The CLI continues to
-be a first-class deliverable for scripting and CI integrity checks.
+Phase 3 (Returns support — schema diff + domain adapter, no UI changes
+expected) per the plan §9.  The CLI and bridge continue to be
+first-class deliverables.
