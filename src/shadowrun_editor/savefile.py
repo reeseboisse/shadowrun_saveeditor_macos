@@ -69,32 +69,39 @@ def detect_game_from_file(path: str | Path) -> str:
     return detect_game(Path(path).read_bytes())
 
 
-def scan_folder(folder: str | Path) -> list[SaveSlot]:
+def scan_folder(folder: str | Path, *, recursive: bool = True, max_depth: int = 4) -> list[SaveSlot]:
     """Walk a folder of save files, returning one SaveSlot per UUID prefix.
 
-    Accepts both:
-      * a folder containing many .sav files (the game's Saves directory)
-      * a single save slot whose .sav and .srt files all share a UUID
+    By default the walk is recursive (capped at `max_depth` levels) so the
+    user can point the editor at a high-level folder like
+    `~/Library/Application Support/Harebrained Schemes/Shadowrun Dragonfall/`
+    without needing to know which sub-directory the game writes saves to.
+
+    Save slot files are grouped by UUID; if a slot's files happen to live
+    in two different sub-directories they're still grouped together (we
+    keep the .sav's parent directory as the slot's `folder`).
     """
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise NotADirectoryError(folder)
+    root = Path(folder)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
 
     slots: dict[str, SaveSlot] = {}
-    for p in sorted(folder.iterdir()):
+
+    def _ingest(p: Path) -> None:
         if not p.is_file():
-            continue
+            return
         m = UUID_RE.match(p.name)
         if not m:
-            continue
+            return
         uid = m.group(1).lower()
         ext = p.suffix.lower()
         slot = slots.get(uid)
         if slot is None:
-            slot = SaveSlot(uuid=uid, folder=folder, sav_path=Path())  # placeholder
+            slot = SaveSlot(uuid=uid, folder=p.parent, sav_path=Path())
             slots[uid] = slot
         if ext == ".sav":
             slot.sav_path = p
+            slot.folder = p.parent  # canonical folder is where the .sav lives
         elif ext == ".srt":
             slot.srt_paths.append(p)
         elif ext == ".png":
@@ -102,7 +109,23 @@ def scan_folder(folder: str | Path) -> list[SaveSlot]:
         elif ext == ".metadata":
             slot.metadata_path = p
 
-    # Drop incomplete slots (no .sav)
+    if not recursive:
+        for p in sorted(root.iterdir()):
+            _ingest(p)
+    else:
+        # Bounded-depth walk: skip hidden dirs and obvious noise.
+        root_depth = len(root.parts)
+        for dirpath, dirnames, filenames in os.walk(root):
+            depth = len(Path(dirpath).parts) - root_depth
+            if depth > max_depth:
+                dirnames[:] = []
+                continue
+            # In-place prune of dirs we won't descend
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for fn in filenames:
+                _ingest(Path(dirpath) / fn)
+
+    # Drop incomplete slots (no .sav file)
     return [s for s in slots.values() if s.sav_path != Path()]
 
 

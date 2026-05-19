@@ -48,6 +48,7 @@ from .service import (
     SaveSession,
     UnsupportedGame,
     character_to_dict,
+    discover_diagnostics,
     discover_save_folders,
     edits_to_list,
     flags_to_list,
@@ -95,6 +96,10 @@ def m_ping(_: dict[str, Any]) -> dict[str, Any]:
 
 def m_discover_save_folders(_: dict[str, Any]) -> dict[str, Any]:
     return {"folders": discover_save_folders()}
+
+
+def m_discover_diagnostics(_: dict[str, Any]) -> dict[str, Any]:
+    return discover_diagnostics()
 
 
 def m_scan_saves(p: dict[str, Any]) -> dict[str, Any]:
@@ -194,6 +199,7 @@ def m_verify(p: dict[str, Any]) -> dict[str, Any]:
 METHODS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "ping": m_ping,
     "discover_save_folders": m_discover_save_folders,
+    "discover_diagnostics": m_discover_diagnostics,
     "scan_saves": m_scan_saves,
     "detect_game": m_detect_game,
     "open_save": m_open_save,

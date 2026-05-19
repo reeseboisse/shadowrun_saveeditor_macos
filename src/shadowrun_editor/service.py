@@ -444,19 +444,21 @@ def _apply_set_world_flag(top: list[Field], name: str, kind: str, value: Any) ->
 # Save-folder scanning across all three games                                 #
 # --------------------------------------------------------------------------- #
 
-# macOS default save folders for each game (per the plan).
+# macOS default save folders for each game. The scanner walks these
+# recursively so we don't need to know the exact "Saves" / "SavedGames" /
+# "Save Games" subdirectory each installer chose.
 DEFAULT_SAVE_FOLDERS: dict[str, list[str]] = {
     "dragonfall": [
-        "~/Library/Application Support/Harebrained Schemes/Shadowrun Dragonfall/Saves",
-        "~/Library/Application Support/Shadowrun Dragonfall Director's Cut/Save Games",
+        "~/Library/Application Support/Harebrained Schemes/Shadowrun Dragonfall",
+        "~/Library/Application Support/Shadowrun Dragonfall Director's Cut",
     ],
     "returns": [
-        "~/Library/Application Support/Harebrained Schemes/Shadowrun Returns/Saves",
-        "~/Library/Application Support/Shadowrun Returns/Save Games",
+        "~/Library/Application Support/Harebrained Schemes/Shadowrun Returns",
+        "~/Library/Application Support/Shadowrun Returns",
     ],
     "hongkong": [
-        "~/Library/Application Support/Harebrained Schemes/Shadowrun Hong Kong/Saves",
-        "~/Library/Application Support/Shadowrun Hong Kong/Save Games",
+        "~/Library/Application Support/Harebrained Schemes/Shadowrun Hong Kong",
+        "~/Library/Application Support/Shadowrun Hong Kong",
     ],
 }
 
@@ -469,6 +471,38 @@ def discover_save_folders() -> dict[str, list[str]]:
         if present:
             out[game] = [str(p) for p in present]
     return out
+
+
+def discover_diagnostics() -> dict[str, Any]:
+    """Verbose discovery info for debugging when the GUI says 'no saves found'
+    but the user knows the path exists. Returns HOME + per-candidate existence
+    + the recursive scan count, so we can tell where the gap is."""
+    import os as _os
+    info: dict[str, Any] = {
+        "home": _os.environ.get("HOME", ""),
+        "cwd": _os.getcwd(),
+        "candidates": [],
+    }
+    for game, candidates in DEFAULT_SAVE_FOLDERS.items():
+        for raw in candidates:
+            expanded = Path(raw).expanduser()
+            entry: dict[str, Any] = {
+                "game": game,
+                "raw": raw,
+                "expanded": str(expanded),
+                "exists": expanded.exists(),
+                "is_dir": expanded.is_dir(),
+                "sav_count": 0,
+            }
+            if entry["is_dir"]:
+                try:
+                    entry["sav_count"] = sum(
+                        1 for p in expanded.rglob("*.sav") if p.is_file()
+                    )
+                except (PermissionError, OSError) as e:
+                    entry["error"] = str(e)
+            info["candidates"].append(entry)
+    return info
 
 
 def scan_all_saves(folders: list[Path] | None = None) -> list[SaveSummary]:
