@@ -40,7 +40,7 @@ struct SaveSlotPicker: View {
         }
     }
 
-    var body: some View {
+    private var searchAndToolsBar: some View {
         VStack(spacing: 0) {
             HStack {
                 TextField("Search saves", text: $search)
@@ -59,16 +59,23 @@ struct SaveSlotPicker: View {
                 .help("Rescan save folders")
             }
             .padding(8)
-            Divider()
-
             if !editor.customFolders.isEmpty {
                 CustomFoldersList(folders: editor.customFolders) {
                     editor.removeCustomFolder($0)
                 }
             }
+            Divider()
+        }
+        .background(.bar)
+    }
 
+    var body: some View {
+        Group {
             if editor.allSaves.isEmpty && !editor.loadingSaves {
-                EmptyState(discovered: editor.discoveredFolders, onChooseFolder: chooseFolder)
+                VStack(spacing: 0) {
+                    searchAndToolsBar
+                    EmptyState(discovered: editor.discoveredFolders, onChooseFolder: chooseFolder)
+                }
             } else {
                 List(filtered, selection: Binding<SaveSummary.ID?>(
                     get: { editor.openSave?.summary.id },
@@ -81,6 +88,11 @@ struct SaveSlotPicker: View {
                         .tag(s.id)
                 }
                 .listStyle(.sidebar)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    // Pin the search bar / folder picker as a top inset so
+                    // it never scrolls away with the list content.
+                    searchAndToolsBar
+                }
             }
         }
     }
