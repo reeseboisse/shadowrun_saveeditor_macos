@@ -161,7 +161,7 @@ private struct FlagValueEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .onAppear { if !initialized { editingText = String(v); initialized = true } }
-                    .onChange(of: v) { _, n in editingText = String(n) }
+                    .onChange(of: v) { n in editingText = String(n) }
             }
         case .double(let v):
             HStack {
@@ -169,14 +169,14 @@ private struct FlagValueEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 110)
                     .onAppear { if !initialized { editingText = String(v); initialized = true } }
-                    .onChange(of: v) { _, n in editingText = String(n) }
+                    .onChange(of: v) { n in editingText = String(n) }
             }
         case .string(let s):
             HStack {
                 TextField("", text: $editingText, onCommit: commitString)
                     .textFieldStyle(.roundedBorder)
                     .onAppear { if !initialized { editingText = s; initialized = true } }
-                    .onChange(of: s) { _, n in editingText = n }
+                    .onChange(of: s) { n in editingText = n }
             }
         case .empty:
             Text("—").foregroundStyle(.secondary)

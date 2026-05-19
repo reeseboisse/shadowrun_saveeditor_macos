@@ -24,8 +24,8 @@ build: project
 	xcodebuild -project ShadowrunEditor.xcodeproj -scheme ShadowrunEditor -configuration Debug
 
 run: build
-	open "build/Debug/Shadowrun Save Editor.app" || \
-	    xcodebuild -project ShadowrunEditor.xcodeproj -scheme ShadowrunEditor -configuration Debug -derivedDataPath build run
+	@APP=$$(xcodebuild -project ShadowrunEditor.xcodeproj -scheme ShadowrunEditor -configuration Debug -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILT_PRODUCTS_DIR/ {d=$$2} /^[[:space:]]*FULL_PRODUCT_NAME/ {n=$$2} END {print d "/" n}'); \
+	  echo "Opening $$APP"; open "$$APP"
 
 clean:
 	rm -rf ShadowrunEditor.xcodeproj build

@@ -225,11 +225,11 @@ struct IntStepperField: View {
                 initialized = true
             }
         }
-        .onChange(of: value) { _, newValue in
+        .onChange(of: value) { newValue in
             localValue = newValue
             localText = String(newValue)
         }
-        .onChange(of: localValue) { _, newValue in
+        .onChange(of: localValue) { newValue in
             localText = String(newValue)
         }
     }
