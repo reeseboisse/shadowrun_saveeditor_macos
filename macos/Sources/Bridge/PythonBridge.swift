@@ -5,9 +5,16 @@
 //  delimited JSON-RPC requests over its stdin/stdout. The bridge is
 //  long-lived for the lifetime of the app — one subprocess per launch.
 //
-//  Threading: this class is an actor so the request/response cycle is
-//  serialized. Each call() suspends until its response line arrives.
-//  Stderr is forwarded to NSLog for diagnostics.
+//  Threading model:
+//    • Stdout / stderr are drained via FileHandle.readabilityHandler,
+//      which Foundation runs on a private background queue. This avoids
+//      blocking Swift's cooperative thread pool on `availableData`.
+//    • Response routing happens through an actor: the handler hops into
+//      the actor via `Task { await self.appendStdout(data) }`.
+//    • call() suspends on a CheckedContinuation keyed by request id;
+//      the stdout reader resumes it when a matching line arrives.
+//
+//  Stderr is forwarded to NSLog with a [bridge] prefix.
 //
 
 import Foundation
@@ -17,6 +24,7 @@ enum BridgeError: LocalizedError {
     case crashed(Int32)
     case rpcError(code: String, message: String)
     case decodeFailed(String)
+    case writeFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -24,39 +32,27 @@ enum BridgeError: LocalizedError {
         case .crashed(let s):       return "Python bridge exited with status \(s)"
         case .rpcError(_, let m):   return m
         case .decodeFailed(let m):  return "Could not decode bridge response: \(m)"
+        case .writeFailed(let m):   return "Could not write to bridge stdin: \(m)"
         }
     }
 }
 
 /// Locates the Python interpreter and the source tree on disk.
-///
-/// Resolution order (first hit wins):
-///   1. $SHADOWRUN_EDITOR_PYTHON env var (full python path)
-///   2. ~/.shadowrun-editor/venv/bin/python3 (the recommended local install)
-///   3. /usr/bin/python3 (system python — works for dev if the package
-///      is on PYTHONPATH)
-///   4. /opt/homebrew/bin/python3, /usr/local/bin/python3 (brew installs)
 struct BridgeLocation {
     var python: URL
-    var sourceRoot: URL?   // PYTHONPATH addition (the `src` folder), if known
+    var sourceRoot: URL?
 
     static func resolve() -> BridgeLocation? {
         let env = ProcessInfo.processInfo.environment
-
-        // 1. Explicit override
         if let p = env["SHADOWRUN_EDITOR_PYTHON"], !p.isEmpty {
             return BridgeLocation(python: URL(fileURLWithPath: p),
                                   sourceRoot: env["SHADOWRUN_EDITOR_SRC"].map { URL(fileURLWithPath: $0) })
         }
-
-        // 2. Local virtualenv
         let home = FileManager.default.homeDirectoryForCurrentUser
         let venvPython = home.appendingPathComponent(".shadowrun-editor/venv/bin/python3")
         if FileManager.default.isExecutableFile(atPath: venvPython.path) {
             return BridgeLocation(python: venvPython, sourceRoot: nil)
         }
-
-        // 3+4. Common system locations
         for path in ["/usr/bin/python3",
                      "/opt/homebrew/bin/python3",
                      "/usr/local/bin/python3"] {
@@ -72,13 +68,13 @@ struct BridgeLocation {
 actor PythonBridge {
     private let process: Process
     private let stdinHandle: FileHandle
-    private let stdoutHandle: FileHandle
-    private let stderrHandle: FileHandle
+    private let stdoutPipe: Pipe
+    private let stderrPipe: Pipe
 
     private var nextID: Int = 1
     private var pendingResponses: [Int: CheckedContinuation<Data, Error>] = [:]
     private var stdoutBuffer = Data()
-    private var readerTask: Task<Void, Never>?
+    private var isAlive = true
 
     init(location: BridgeLocation) throws {
         let p = Process()
@@ -100,6 +96,15 @@ actor PythonBridge {
         p.standardOutput = stdoutPipe
         p.standardError = stderrPipe
 
+        NSLog("[bridge] launching: %@ %@",
+              location.python.path,
+              (p.arguments ?? []).joined(separator: " "))
+
+        p.terminationHandler = { proc in
+            NSLog("[bridge] process exited: status=%d reason=%d",
+                  proc.terminationStatus, proc.terminationReason.rawValue)
+        }
+
         do {
             try p.run()
         } catch {
@@ -108,48 +113,49 @@ actor PythonBridge {
 
         self.process = p
         self.stdinHandle = stdinPipe.fileHandleForWriting
-        self.stdoutHandle = stdoutPipe.fileHandleForReading
-        self.stderrHandle = stderrPipe.fileHandleForReading
+        self.stdoutPipe = stdoutPipe
+        self.stderrPipe = stderrPipe
 
-        Task { [weak self] in
-            await self?.startReaders()
+        // Install readability handlers. These fire on Foundation's
+        // private background queue whenever data is available; the
+        // closures forward into the actor via async Tasks.
+        let weakSelf = WeakRef(self)
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                // EOF from the subprocess. Detach the handler so we
+                // don't keep firing.
+                handle.readabilityHandler = nil
+                if let ref = weakSelf.value {
+                    Task { await ref.handleEOF() }
+                }
+                return
+            }
+            if let ref = weakSelf.value {
+                Task { await ref.appendStdout(data) }
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            if let s = String(data: data, encoding: .utf8), !s.isEmpty {
+                NSLog("[bridge] stderr: %@", s)
+            }
         }
     }
 
     deinit {
-        readerTask?.cancel()
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
         if process.isRunning {
             process.terminate()
         }
     }
 
-    // MARK: - Reader loop
-
-    private func startReaders() {
-        readerTask = Task { [stdoutHandle, stderrHandle] in
-            // Stdout: framed JSON lines
-            let stdoutTask = Task {
-                let bufSize = 4096
-                while !Task.isCancelled {
-                    let data = stdoutHandle.availableData
-                    if data.isEmpty { break }
-                    await self.appendStdout(data)
-                }
-            }
-            // Stderr: forward to NSLog with the [bridge] prefix
-            let stderrTask = Task {
-                while !Task.isCancelled {
-                    let data = stderrHandle.availableData
-                    if data.isEmpty { break }
-                    if let s = String(data: data, encoding: .utf8) {
-                        NSLog("[bridge] %@", s)
-                    }
-                }
-            }
-            _ = await stdoutTask.value
-            _ = await stderrTask.value
-        }
-    }
+    // MARK: - Reader side
 
     private func appendStdout(_ data: Data) {
         stdoutBuffer.append(data)
@@ -162,11 +168,14 @@ actor PythonBridge {
 
     private func handleLine(_ data: Data) {
         guard let envelope = try? JSONDecoder().decode(ResponseEnvelope.self, from: data) else {
-            NSLog("[bridge] could not parse line: %@",
+            NSLog("[bridge] could not parse response line: %@",
                   String(data: data, encoding: .utf8) ?? "<binary>")
             return
         }
         guard let id = envelope.id, let continuation = pendingResponses.removeValue(forKey: id) else {
+            NSLog("[bridge] response for unknown id=%@: %@",
+                  envelope.id.map(String.init) ?? "nil",
+                  String(data: data, encoding: .utf8) ?? "<binary>")
             return
         }
         if let err = envelope.error {
@@ -176,15 +185,23 @@ actor PythonBridge {
         }
     }
 
+    private func handleEOF() {
+        isAlive = false
+        NSLog("[bridge] EOF on stdout. Failing %d pending request(s).",
+              pendingResponses.count)
+        let pending = pendingResponses
+        pendingResponses.removeAll()
+        for (_, c) in pending {
+            c.resume(throwing: BridgeError.crashed(process.terminationStatus))
+        }
+    }
+
     private struct ResponseEnvelope: Decodable {
         var id: Int?
         var error: ErrorBody?
         struct ErrorBody: Decodable { var code: String; var message: String }
     }
 
-    /// Wraps `{ "id": ..., "result": T }` for decoding. Declared at file
-    /// scope (not inside `call`) because Swift can't nest a generic type
-    /// declaration inside a generic function.
     private struct ResultWrapper<T: Decodable>: Decodable {
         var id: Int
         var result: T
@@ -193,16 +210,24 @@ actor PythonBridge {
     // MARK: - Public RPC
 
     func call<R: Decodable>(_ method: String, params: [String: Any]) async throws -> R {
+        guard isAlive else { throw BridgeError.crashed(process.terminationStatus) }
         let id = nextID; nextID += 1
         let envelope: [String: Any] = ["id": id, "method": method, "params": params]
         let payload = try JSONSerialization.data(withJSONObject: envelope, options: [])
 
+        NSLog("[bridge] -> id=%d method=%@", id, method)
+
         let line = payload + Data([0x0A])
-        try stdinHandle.write(contentsOf: line)
+        do {
+            try stdinHandle.write(contentsOf: line)
+        } catch {
+            throw BridgeError.writeFailed(error.localizedDescription)
+        }
 
         let body: Data = try await withCheckedThrowingContinuation { continuation in
             pendingResponses[id] = continuation
         }
+        NSLog("[bridge] <- id=%d (%d bytes)", id, body.count)
 
         do {
             let wrapper = try JSONDecoder().decode(ResultWrapper<R>.self, from: body)
@@ -275,4 +300,12 @@ actor PythonBridge {
     func close(handle: Int) async throws {
         let _: [String: Bool] = try await call("close", params: ["handle": handle])
     }
+}
+
+/// Weak reference helper so the readabilityHandler doesn't strongly
+/// retain the actor (Foundation's pipe queue would otherwise hold the
+/// bridge alive forever).
+private final class WeakRef<T: AnyObject>: @unchecked Sendable {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
 }
