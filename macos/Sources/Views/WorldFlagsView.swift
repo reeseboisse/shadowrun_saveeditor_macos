@@ -72,7 +72,7 @@ struct WorldFlagsView: View {
             Divider()
 
             Table(filtered) {
-                TableColumn("Flag", value: \.name) { f in
+                TableColumn("Flag") { (f: WorldFlagView) in
                     HStack {
                         Text(f.name).font(.system(.body, design: .monospaced))
                         if let s = f.scope_name, !s.isEmpty {
@@ -84,13 +84,13 @@ struct WorldFlagsView: View {
                         }
                     }
                 }
-                TableColumn("Type") { f in
+                TableColumn("Type") { (f: WorldFlagView) in
                     Text(f.kind)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .width(60)
-                TableColumn("Value") { f in
+                TableColumn("Value") { (f: WorldFlagView) in
                     FlagValueEditor(flag: f)
                 }
                 .width(min: 160, ideal: 220)
