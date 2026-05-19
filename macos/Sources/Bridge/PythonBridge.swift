@@ -182,6 +182,14 @@ actor PythonBridge {
         struct ErrorBody: Decodable { var code: String; var message: String }
     }
 
+    /// Wraps `{ "id": ..., "result": T }` for decoding. Declared at file
+    /// scope (not inside `call`) because Swift can't nest a generic type
+    /// declaration inside a generic function.
+    private struct ResultWrapper<T: Decodable>: Decodable {
+        var id: Int
+        var result: T
+    }
+
     // MARK: - Public RPC
 
     func call<R: Decodable>(_ method: String, params: [String: Any]) async throws -> R {
@@ -196,9 +204,8 @@ actor PythonBridge {
             pendingResponses[id] = continuation
         }
 
-        struct Wrapper<T: Decodable>: Decodable { var id: Int; var result: T }
         do {
-            let wrapper = try JSONDecoder().decode(Wrapper<R>.self, from: body)
+            let wrapper = try JSONDecoder().decode(ResultWrapper<R>.self, from: body)
             return wrapper.result
         } catch {
             throw BridgeError.decodeFailed("\(error) - body=\(String(data: body, encoding: .utf8) ?? "?")")

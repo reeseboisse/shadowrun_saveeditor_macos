@@ -189,7 +189,7 @@ private struct CommitSheet: View {
                             try? await Task.sleep(nanoseconds: 600_000_000)
                             dismiss()
                         case .failure(let err):
-                            result = err
+                            result = err.message
                         }
                     }
                 }

@@ -171,8 +171,15 @@ final class EditorState: ObservableObject {
 
     // MARK: - Commit
 
-    func commit() async -> Result<[String], String> {
-        guard let b = bridge, let h = openSave?.handle else { return .failure("No save open") }
+    struct CommitFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    func commit() async -> Result<[String], CommitFailure> {
+        guard let b = bridge, let h = openSave?.handle else {
+            return .failure(CommitFailure(message: "No save open"))
+        }
         do {
             let r = try await b.commit(handle: h)
             openSave = OpenSave(
@@ -181,7 +188,7 @@ final class EditorState: ObservableObject {
             )
             return .success(r.written)
         } catch {
-            return .failure(error.localizedDescription)
+            return .failure(CommitFailure(message: error.localizedDescription))
         }
     }
 }
