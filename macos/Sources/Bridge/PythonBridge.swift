@@ -221,6 +221,10 @@ actor PythonBridge {
         try await call("discover_save_folders", params: [:])
     }
 
+    func discoverDiagnostics() async throws -> DiagnosticsResponse {
+        try await call("discover_diagnostics", params: [:])
+    }
+
     func scanSaves(folders: [String]? = nil) async throws -> ScanResponse {
         var params: [String: Any] = [:]
         if let f = folders { params["folders"] = f }

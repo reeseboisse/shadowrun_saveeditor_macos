@@ -193,3 +193,21 @@ struct ScanResponse: Codable {
 struct DiscoverResponse: Codable {
     var folders: [String: [String]]
 }
+
+struct DiagnosticsCandidate: Codable, Identifiable {
+    var game: String
+    var raw: String
+    var expanded: String
+    var exists: Bool
+    var is_dir: Bool
+    var sav_count: Int
+    var error: String?
+
+    var id: String { expanded }
+}
+
+struct DiagnosticsResponse: Codable {
+    var home: String
+    var cwd: String
+    var candidates: [DiagnosticsCandidate]
+}

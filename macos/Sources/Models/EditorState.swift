@@ -121,6 +121,17 @@ final class EditorState: ObservableObject {
         }
     }
 
+    @Published var diagnostics: DiagnosticsResponse?
+
+    func runDiagnostics() async {
+        guard let b = bridge else { return }
+        do {
+            diagnostics = try await b.discoverDiagnostics()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func removeCustomFolder(_ path: String) {
         customFolders.removeAll { $0 == path }
         persistCustomFolders()

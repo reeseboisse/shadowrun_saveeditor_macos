@@ -116,9 +116,63 @@ private struct EmptyState: View {
                 Label("Choose Folder…", systemImage: "folder.badge.plus")
             }
             .buttonStyle(.borderedProminent)
+
+            Divider().padding(.vertical, 4)
+
+            DiagnosticPanel()
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DiagnosticPanel: View {
+    @EnvironmentObject var editor: EditorState
+    @State private var running = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Debug").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    running = true
+                    Task {
+                        await editor.runDiagnostics()
+                        running = false
+                    }
+                } label: {
+                    Label(running ? "Running…" : "Run Bridge Diagnostic",
+                          systemImage: "stethoscope")
+                        .font(.caption)
+                }
+            }
+            if let d = editor.diagnostics {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("HOME = \(d.home)").font(.system(.caption, design: .monospaced))
+                        Text("CWD  = \(d.cwd)").font(.system(.caption, design: .monospaced))
+                        ForEach(d.candidates) { c in
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: c.is_dir ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundStyle(c.is_dir ? .green : .red)
+                                    .font(.caption)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(c.expanded)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                    Text("exists=\(String(c.exists))  is_dir=\(String(c.is_dir))  sav_count=\(c.sav_count)\(c.error.map { "  err: \($0)" } ?? "")")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+            }
+        }
     }
 }
 
