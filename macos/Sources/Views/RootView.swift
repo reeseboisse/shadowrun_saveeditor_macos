@@ -80,42 +80,48 @@ private struct OpenSaveView: View {
     @State private var tab: EditorTab = .character
 
     var body: some View {
-        // DEBUG MARKER v0.3 — if this banner is not visible, the build is
-        // still serving stale OpenSaveView code (clean DerivedData and rebuild).
         VStack(spacing: 0) {
-            Text("editor v0.3 — tab: \(tab.rawValue)")
-                .font(.caption)
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(4)
-                .background(Color.red)
+            // Top chrome: debug banner + (optional) pending-edits banner +
+            // segmented Picker. Held at intrinsic vertical size with
+            // layoutPriority(1) so a Table inside the active tab cannot
+            // squash these elements to zero height.
+            VStack(spacing: 0) {
+                Text("editor v0.3 — tab: \(tab.rawValue)")
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(4)
+                    .background(Color.red)
 
-            if !open.pendingEdits.isEmpty {
-                HStack(spacing: 12) {
-                    Image(systemName: "pencil.tip.crop.circle")
-                    Text("\(open.pendingEdits.count) unsaved edit\(open.pendingEdits.count == 1 ? "" : "s")")
-                        .fontWeight(.medium)
-                    Spacer()
-                    Button("Discard") { Task { await editor.clearPending() } }
-                    Button("Review & Save…") { showCommitSheet = true }
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .buttonStyle(.borderedProminent)
+                if !open.pendingEdits.isEmpty {
+                    HStack(spacing: 12) {
+                        Image(systemName: "pencil.tip.crop.circle")
+                        Text("\(open.pendingEdits.count) unsaved edit\(open.pendingEdits.count == 1 ? "" : "s")")
+                            .fontWeight(.medium)
+                        Spacer()
+                        Button("Discard") { Task { await editor.clearPending() } }
+                        Button("Review & Save…") { showCommitSheet = true }
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(12)
+                    .background(Color.accentColor.opacity(0.12))
                 }
-                .padding(12)
-                .background(Color.accentColor.opacity(0.12))
-            }
 
-            Picker("", selection: $tab) {
-                Text("Character").tag(EditorTab.character)
-                Text("World Flags").tag(EditorTab.flags)
-                Text("Pending (\(open.pendingEdits.count))").tag(EditorTab.pending)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+                Picker("", selection: $tab) {
+                    Text("Character").tag(EditorTab.character)
+                    Text("World Flags").tag(EditorTab.flags)
+                    Text("Pending (\(open.pendingEdits.count))").tag(EditorTab.pending)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
-            Divider()
+                Divider()
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
 
             Group {
                 switch tab {
@@ -128,6 +134,7 @@ private struct OpenSaveView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(0)
         }
         .sheet(isPresented: $showCommitSheet) {
             CommitSheet(open: open)

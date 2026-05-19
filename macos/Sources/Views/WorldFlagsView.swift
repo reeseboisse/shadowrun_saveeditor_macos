@@ -43,32 +43,40 @@ struct WorldFlagsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WarningBanner()
+            // Pinned chrome — banner + search + chip strip. .fixedSize on the
+            // vertical axis forces SwiftUI to honor the chrome's intrinsic
+            // height and prevents the Table below from claiming this region
+            // when its content's intrinsic height exceeds the container.
+            VStack(spacing: 0) {
+                WarningBanner()
 
-            HStack {
-                TextField("Search flag names", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                Text("\(filtered.count) of \(flags.count)")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+                HStack {
+                    TextField("Search flag names", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                    Text("\(filtered.count) of \(flags.count)")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Chip(text: "all", active: activePrefix == nil) {
-                        activePrefix = nil
-                    }
-                    ForEach(prefixes, id: \.self) { p in
-                        Chip(text: p, active: activePrefix == p) {
-                            activePrefix = (activePrefix == p) ? nil : p
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Chip(text: "all", active: activePrefix == nil) {
+                            activePrefix = nil
+                        }
+                        ForEach(prefixes, id: \.self) { p in
+                            Chip(text: p, active: activePrefix == p) {
+                                activePrefix = (activePrefix == p) ? nil : p
+                            }
                         }
                     }
+                    .padding(.horizontal, 12).padding(.bottom, 6)
                 }
-                .padding(.horizontal, 12).padding(.bottom, 6)
-            }
 
-            Divider()
+                Divider()
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
 
             Table(filtered) {
                 TableColumn("Flag") { (f: WorldFlagView) in
@@ -94,6 +102,7 @@ struct WorldFlagsView: View {
                 }
                 .width(min: 160, ideal: 220)
             }
+            .layoutPriority(0)
         }
     }
 }
