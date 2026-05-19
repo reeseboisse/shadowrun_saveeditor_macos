@@ -5,6 +5,11 @@
 
 .PHONY: help setup project build run clean
 
+XCODEBUILD_FLAGS = -project ShadowrunEditor.xcodeproj \
+                   -scheme ShadowrunEditor \
+                   -configuration Debug \
+                   -derivedDataPath build
+
 help:
 	@echo "Targets:"
 	@echo "  make setup    Install Python deps into ~/.shadowrun-editor/venv"
@@ -21,10 +26,10 @@ project:
 	xcodegen
 
 build: project
-	xcodebuild -project ShadowrunEditor.xcodeproj -scheme ShadowrunEditor -configuration Debug
+	xcodebuild $(XCODEBUILD_FLAGS)
 
 run: build
-	@APP=$$(xcodebuild -project ShadowrunEditor.xcodeproj -scheme ShadowrunEditor -configuration Debug -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILT_PRODUCTS_DIR/ {d=$$2} /^[[:space:]]*FULL_PRODUCT_NAME/ {n=$$2} END {print d "/" n}'); \
+	@APP=$$(xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILT_PRODUCTS_DIR/ {d=$$2} /^[[:space:]]*FULL_PRODUCT_NAME/ {n=$$2} END {print d "/" n}'); \
 	  echo "Opening $$APP"; open "$$APP"
 
 clean:
