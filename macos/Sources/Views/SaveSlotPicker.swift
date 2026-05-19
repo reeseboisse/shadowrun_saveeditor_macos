@@ -8,10 +8,25 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct SaveSlotPicker: View {
     @EnvironmentObject var editor: EditorState
     @State private var search = ""
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add Folder"
+        panel.message = "Choose your Shadowrun save folder. The app will scan it for .sav files."
+        panel.directoryURL = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        if panel.runModal() == .OK, let url = panel.url {
+            editor.addCustomFolder(url.path)
+        }
+    }
 
     var filtered: [SaveSummary] {
         guard !search.isEmpty else { return editor.allSaves }
@@ -31,6 +46,12 @@ struct SaveSlotPicker: View {
                 TextField("Search saves", text: $search)
                     .textFieldStyle(.roundedBorder)
                 Button {
+                    chooseFolder()
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .help("Add a save folder to scan")
+                Button {
                     Task { await editor.rescanSaves() }
                 } label: {
                     Image(systemName: editor.loadingSaves ? "arrow.triangle.2.circlepath.circle" : "arrow.clockwise")
@@ -40,8 +61,14 @@ struct SaveSlotPicker: View {
             .padding(8)
             Divider()
 
+            if !editor.customFolders.isEmpty {
+                CustomFoldersList(folders: editor.customFolders) {
+                    editor.removeCustomFolder($0)
+                }
+            }
+
             if editor.allSaves.isEmpty && !editor.loadingSaves {
-                EmptyState(discovered: editor.discoveredFolders)
+                EmptyState(discovered: editor.discoveredFolders, onChooseFolder: chooseFolder)
             } else {
                 List(filtered, selection: Binding<SaveSummary.ID?>(
                     get: { editor.openSave?.summary.id },
@@ -61,27 +88,73 @@ struct SaveSlotPicker: View {
 
 private struct EmptyState: View {
     let discovered: [String: [String]]
+    let onChooseFolder: () -> Void
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("No saves found.")
                 .font(.headline)
             if discovered.isEmpty {
-                Text("The editor looks for Shadowrun saves under ~/Library/Application Support/Harebrained Schemes/ — none of the expected folders exist on this machine yet.")
+                Text("The editor looks for Shadowrun saves under ~/Library/Application Support/Harebrained Schemes/ — none of the expected folders exist on this machine.")
                     .foregroundStyle(.secondary)
+                Text("If your saves live elsewhere (GOG, Steam, or App Store installs use different paths), add the folder manually.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
             } else {
-                Text("Searched folders:")
+                Text("Searched these folders:")
                     .foregroundStyle(.secondary)
                 ForEach(discovered.keys.sorted(), id: \.self) { game in
                     if let folders = discovered[game] {
                         ForEach(folders, id: \.self) { f in
                             Text(f).font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
+            Button(action: onChooseFolder) {
+                Label("Choose Folder…", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CustomFoldersList: View {
+    let folders: [String]
+    let onRemove: (String) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(folders, id: \.self) { p in
+                    HStack(spacing: 4) {
+                        Text(p)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            onRemove(p)
+                        } label: {
+                            Image(systemName: "minus.circle").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop scanning this folder")
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        } label: {
+            Text("Custom folders (\(folders.count))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        Divider()
     }
 }
 

@@ -20,6 +20,9 @@ final class EditorState: ObservableObject {
     @Published var allSaves: [SaveSummary] = []
     @Published var discoveredFolders: [String: [String]] = [:]
     @Published var loadingSaves: Bool = false
+    @Published var customFolders: [String] = []
+
+    private let customFoldersKey = "shadowrunEditor.customFolders"
 
     // Currently open save
     @Published var openSave: OpenSave?
@@ -46,6 +49,7 @@ final class EditorState: ObservableObject {
     // MARK: - Bootstrap
 
     func bootstrap() async {
+        loadCustomFolders()
         guard let loc = BridgeLocation.resolve() else {
             bridgeStatus = .missing(
                 """
@@ -84,7 +88,14 @@ final class EditorState: ObservableObject {
         do {
             let discover = try await b.discoverFolders()
             self.discoveredFolders = discover.folders
-            let scan = try await b.scanSaves(folders: nil)
+
+            // Combine auto-discovered folders with user-picked ones.
+            // If neither yields anything the bridge falls back to its built-in
+            // default scan (passing folders=nil).
+            var folders = discover.folders.values.flatMap { $0 }
+            folders.append(contentsOf: customFolders)
+            let folderArg: [String]? = folders.isEmpty ? nil : Array(Set(folders))
+            let scan = try await b.scanSaves(folders: folderArg)
             self.allSaves = scan.saves.sorted { lhs, rhs in
                 // Most recent first; saves without a time go to the bottom.
                 switch (lhs.time_utc, rhs.time_utc) {
@@ -97,6 +108,31 @@ final class EditorState: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: - Custom folders (NSOpenPanel)
+
+    func addCustomFolder(_ path: String) {
+        let expanded = (path as NSString).expandingTildeInPath
+        if !customFolders.contains(expanded) {
+            customFolders.append(expanded)
+            persistCustomFolders()
+            Task { await rescanSaves() }
+        }
+    }
+
+    func removeCustomFolder(_ path: String) {
+        customFolders.removeAll { $0 == path }
+        persistCustomFolders()
+        Task { await rescanSaves() }
+    }
+
+    private func loadCustomFolders() {
+        customFolders = UserDefaults.standard.stringArray(forKey: customFoldersKey) ?? []
+    }
+
+    private func persistCustomFolders() {
+        UserDefaults.standard.set(customFolders, forKey: customFoldersKey)
     }
 
     // MARK: - Opening / closing a save
