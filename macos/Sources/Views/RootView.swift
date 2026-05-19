@@ -17,18 +17,16 @@ struct RootView: View {
             SaveSlotPicker()
                 .frame(minWidth: 320)
         } detail: {
-            if case .missing(let msg) = editor.bridgeStatus {
-                BridgeMissingView(message: msg)
-            } else if case .crashed(let msg) = editor.bridgeStatus {
-                BridgeCrashedView(message: msg)
-            } else if let open = editor.openSave {
-                if open.summary.supported {
-                    OpenSaveView(open: open)
-                } else {
-                    UnsupportedGameView(summary: open.summary)
-                }
-            } else {
-                EmptyDetailView()
+            // Wrap detail content in a GeometryReader and explicitly size it
+            // to the available viewport. NavigationSplitView on some macOS
+            // versions does not constrain its detail content's intrinsic
+            // height — a long List inside the detail will then report a
+            // height larger than the window, dragging the entire split view
+            // (including the sidebar) into an oversized scroll region.
+            GeometryReader { proxy in
+                detailContent
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
             }
         }
         .alert("Editor error",
@@ -42,6 +40,23 @@ struct RootView: View {
                message: {
                    Text(editor.lastError ?? "")
                })
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if case .missing(let msg) = editor.bridgeStatus {
+            BridgeMissingView(message: msg)
+        } else if case .crashed(let msg) = editor.bridgeStatus {
+            BridgeCrashedView(message: msg)
+        } else if let open = editor.openSave {
+            if open.summary.supported {
+                OpenSaveView(open: open)
+            } else {
+                UnsupportedGameView(summary: open.summary)
+            }
+        } else {
+            EmptyDetailView()
+        }
     }
 }
 
