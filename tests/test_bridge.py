@@ -56,7 +56,9 @@ def test_open_then_refresh(tmp_path: Path):
     h = opened["handle"]
     assert opened["summary"]["game"] == "dragonfall"
     assert opened["character"]["name"] == "Cooma"
-    assert opened["character"]["etiquettes"] == {"security": 1}
+    # The most-recent snapshot in this corpus save has both security AND
+    # street active (street was added later via karma).
+    assert opened["character"]["etiquettes"] == {"security": 1, "street": 1}
     assert opened["pending_edits"] == []
 
     # Round-trip refresh — should match

@@ -248,13 +248,20 @@ def find_player_snapshots(top: list[Field]) -> list[PlayerSnapshot]:
 
 
 def primary_player_snapshot(top: list[Field]) -> PlayerSnapshot | None:
-    """Pick a representative snapshot for display (first one with skills set,
-    falling back to first overall)."""
+    """Pick the snapshot most representative of the player's *current* state
+    for display.
+
+    The .sav contains snapshots in chronological order, oldest first: the
+    earliest are the post-character-creation autosaves (before karma spent),
+    later ones reflect the player's progression. The user wants to see what
+    their character looks like right now, so we pick the LAST meaningful
+    snapshot rather than the first.
+    """
     snaps = find_player_snapshots(top)
-    for s in snaps:
+    for s in reversed(snaps):
         if s.has_meaningful_data():
             return s
-    return snaps[0] if snaps else None
+    return snaps[-1] if snaps else None
 
 
 # --------------------------------------------------------------------------- #
@@ -503,7 +510,13 @@ class CharacterSheet:
         snaps = find_player_snapshots(top)
         if not snaps:
             return None
-        primary = next((s for s in snaps if s.has_meaningful_data()), snaps[0])
+        # Pick the most-recent meaningful snapshot; the early snapshots in the
+        # file are post-character-creation autosaves that won't show karma
+        # spent later in the playthrough.
+        primary = next(
+            (s for s in reversed(snaps) if s.has_meaningful_data()),
+            snaps[-1],
+        )
 
         def _msg_int_map(msg: Field | None, tag_to_name: dict[int, str]) -> dict[str, int]:
             out: dict[str, int] = {}
