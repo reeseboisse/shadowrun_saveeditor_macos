@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadowrun_editor"
+version = "0.1.0"
+description = "Shadowrun trilogy save game editor"
+requires-python = ">=3.11"
+dependencies = [
+    "dnfile>=0.15",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+shadowrun-editor = "shadowrun_editor.cli:main"
+shadowrun-extract-schema = "shadowrun_editor.extractor:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
