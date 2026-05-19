@@ -43,67 +43,71 @@ struct WorldFlagsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Pinned chrome — banner + search + chip strip. .fixedSize on the
-            // vertical axis forces SwiftUI to honor the chrome's intrinsic
-            // height and prevents the Table below from claiming this region
-            // when its content's intrinsic height exceeds the container.
-            VStack(spacing: 0) {
-                WarningBanner()
+            WarningBanner()
 
-                HStack {
-                    TextField("Search flag names", text: $search)
-                        .textFieldStyle(.roundedBorder)
-                    Text("\(filtered.count) of \(flags.count)")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Chip(text: "all", active: activePrefix == nil) {
-                            activePrefix = nil
-                        }
-                        ForEach(prefixes, id: \.self) { p in
-                            Chip(text: p, active: activePrefix == p) {
-                                activePrefix = (activePrefix == p) ? nil : p
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.bottom, 6)
-                }
-
-                Divider()
+            HStack {
+                TextField("Search flag names", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                Text("\(filtered.count) of \(flags.count)")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+            .padding(.horizontal, 12).padding(.vertical, 8)
 
-            Table(filtered) {
-                TableColumn("Flag") { (f: WorldFlagView) in
-                    HStack {
-                        Text(f.name).font(.system(.body, design: .monospaced))
-                        if let s = f.scope_name, !s.isEmpty {
-                            Text(s)
-                                .font(.caption2)
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color.gray.opacity(0.18))
-                                .cornerRadius(3)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Chip(text: "all", active: activePrefix == nil) {
+                        activePrefix = nil
+                    }
+                    ForEach(prefixes, id: \.self) { p in
+                        Chip(text: p, active: activePrefix == p) {
+                            activePrefix = (activePrefix == p) ? nil : p
                         }
                     }
                 }
-                TableColumn("Type") { (f: WorldFlagView) in
-                    Text(f.kind)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .width(60)
-                TableColumn("Value") { (f: WorldFlagView) in
-                    FlagValueEditor(flag: f)
-                }
-                .width(min: 160, ideal: 220)
+                .padding(.horizontal, 12).padding(.bottom, 6)
             }
-            .layoutPriority(0)
+
+            Divider()
+
+            // Use a List instead of a Table. macOS Table reports its intrinsic
+            // content height as the sum of all row heights, which (for hundreds
+            // of world-flag rows) makes the enclosing VStack — and even the
+            // NavigationSplitView sidebar — taller than the window. List
+            // contains its own scrolling and doesn't leak the inner content
+            // height to its parent.
+            List(filtered) { (flag: WorldFlagView) in
+                FlagRow(flag: flag)
+            }
+            .listStyle(.inset)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+
+private struct FlagRow: View {
+    let flag: WorldFlagView
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(flag.name).font(.system(.body, design: .monospaced))
+                    if let s = flag.scope_name, !s.isEmpty {
+                        Text(s)
+                            .font(.caption2)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.gray.opacity(0.18))
+                            .cornerRadius(3)
+                    }
+                }
+                Text(flag.kind).font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            FlagValueEditor(flag: flag)
+                .frame(width: 200, alignment: .trailing)
+        }
+        .padding(.vertical, 2)
     }
 }
 

@@ -136,6 +136,7 @@ private struct OpenSaveView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showCommitSheet) {
             CommitSheet(open: open)
         }
