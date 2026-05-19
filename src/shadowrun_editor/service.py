@@ -232,6 +232,30 @@ class SaveSession:
         self._edits.append(e)
         return e
 
+    def queue_add_etiquette(self, etiquette: str) -> PendingEdit:
+        self._require_supported()
+        if etiquette not in df.ETIQUETTES:
+            raise ValueError(f"unknown etiquette: {etiquette}")
+        e = PendingEdit(
+            op="add_etiquette",
+            args={"etiquette": etiquette},
+            description=f"Enable etiquette: {etiquette}",
+        )
+        self._edits.append(e)
+        return e
+
+    def queue_remove_etiquette(self, etiquette: str) -> PendingEdit:
+        self._require_supported()
+        if etiquette not in df.ETIQUETTES:
+            raise ValueError(f"unknown etiquette: {etiquette}")
+        e = PendingEdit(
+            op="remove_etiquette",
+            args={"etiquette": etiquette},
+            description=f"Disable etiquette: {etiquette}",
+        )
+        self._edits.append(e)
+        return e
+
     def queue_set_attribute(self, attr: str, value: int) -> PendingEdit:
         self._require_supported()
         if attr not in df.ATTRIBUTES:
@@ -368,6 +392,10 @@ class SaveSession:
         a = e.args
         if e.op == "set_etiquette":
             df.set_etiquette(top, a["etiquette"])
+        elif e.op == "add_etiquette":
+            df.add_etiquette(top, a["etiquette"])
+        elif e.op == "remove_etiquette":
+            df.remove_etiquette(top, a["etiquette"])
         elif e.op == "set_attribute":
             df.set_attribute(top, a["attr"], a["value"])
         elif e.op == "set_skill":

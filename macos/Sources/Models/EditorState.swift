@@ -188,6 +188,14 @@ final class EditorState: ObservableObject {
         await apply { try await $0.setEtiquette(handle: $1, etiquette: name) }
     }
 
+    func addEtiquette(_ name: String) async {
+        await apply { try await $0.addEtiquette(handle: $1, etiquette: name) }
+    }
+
+    func removeEtiquette(_ name: String) async {
+        await apply { try await $0.removeEtiquette(handle: $1, etiquette: name) }
+    }
+
     func setKarma(_ v: Int) async {
         await apply { try await $0.setKarma(handle: $1, value: v) }
     }

@@ -264,6 +264,14 @@ actor PythonBridge {
         try await call("set_etiquette", params: ["handle": handle, "etiquette": etiquette])
     }
 
+    func addEtiquette(handle: Int, etiquette: String) async throws -> RefreshResponse {
+        try await call("add_etiquette", params: ["handle": handle, "etiquette": etiquette])
+    }
+
+    func removeEtiquette(handle: Int, etiquette: String) async throws -> RefreshResponse {
+        try await call("remove_etiquette", params: ["handle": handle, "etiquette": etiquette])
+    }
+
     func setKarma(handle: Int, value: Int) async throws -> RefreshResponse {
         try await call("set_karma", params: ["handle": handle, "value": value])
     }

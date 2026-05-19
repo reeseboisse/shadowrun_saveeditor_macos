@@ -131,6 +131,18 @@ def m_set_etiquette(p: dict[str, Any]) -> dict[str, Any]:
     return _refresh_payload(sess)
 
 
+def m_add_etiquette(p: dict[str, Any]) -> dict[str, Any]:
+    sess = _require(int(p["handle"]))
+    sess.queue_add_etiquette(p["etiquette"])
+    return _refresh_payload(sess)
+
+
+def m_remove_etiquette(p: dict[str, Any]) -> dict[str, Any]:
+    sess = _require(int(p["handle"]))
+    sess.queue_remove_etiquette(p["etiquette"])
+    return _refresh_payload(sess)
+
+
 def m_set_attribute(p: dict[str, Any]) -> dict[str, Any]:
     sess = _require(int(p["handle"]))
     sess.queue_set_attribute(p["attribute"], int(p["value"]))
@@ -205,6 +217,8 @@ METHODS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "open_save": m_open_save,
     "refresh": m_refresh,
     "set_etiquette": m_set_etiquette,
+    "add_etiquette": m_add_etiquette,
+    "remove_etiquette": m_remove_etiquette,
     "set_attribute": m_set_attribute,
     "set_skill": m_set_skill,
     "set_karma": m_set_karma,

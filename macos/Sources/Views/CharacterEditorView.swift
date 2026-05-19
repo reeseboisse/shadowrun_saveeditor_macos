@@ -113,35 +113,42 @@ struct CharacterEditorView: View {
     }
 
     private func etiquettesSection(_ c: CharacterView) -> some View {
-        GroupBox("Etiquette") {
-            let current = c.etiquettes.keys.sorted().first
-            HStack {
-                Picker("Etiquette", selection: Binding<String>(
-                    get: { current ?? "" },
-                    set: { newValue in
-                        guard !newValue.isEmpty else { return }
-                        Task { await editor.setEtiquette(newValue) }
-                    })
-                ) {
-                    if current == nil {
-                        Text("(none)").tag("")
-                    }
-                    ForEach(etiquetteNames, id: \.self) { name in
-                        Text(prettifyEtiquette(name)).tag(name)
+        GroupBox("Etiquettes") {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(etiquetteNames, id: \.self) { name in
+                    let rating = c.etiquettes[name] ?? 0
+                    let isActive = rating > 0
+                    HStack {
+                        Toggle(isOn: Binding(
+                            get: { isActive },
+                            set: { newValue in
+                                Task {
+                                    if newValue {
+                                        await editor.addEtiquette(name)
+                                    } else {
+                                        await editor.removeEtiquette(name)
+                                    }
+                                }
+                            }
+                        )) {
+                            Text(prettifyEtiquette(name))
+                                .frame(minWidth: 140, alignment: .leading)
+                        }
+                        Spacer()
+                        if isActive {
+                            Text("rating \(rating)")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                                .monospacedDigit()
+                        }
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                Spacer()
-                if let cur = current, let rating = c.etiquettes[cur] {
-                    Text("rating \(rating)")
-                        .foregroundStyle(.secondary)
-                }
+                Text("Check the etiquettes you want active. Enabling a new etiquette sets its rating to 1 — adjust further via in-game karma. Disabling drops the rating to 0.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
             }
             .padding(.vertical, 4)
-            Text("Etiquettes are skill tags. Changing it replaces the current etiquette with the new one and preserves the rating.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 

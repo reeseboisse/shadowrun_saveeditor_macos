@@ -98,3 +98,49 @@ def test_no_op_edit_produces_no_byte_change():
     out = serialize_message(top)
     assert out == data, "no-op etiquette set should produce byte-identical output"
     assert not report.changes
+
+
+def test_add_etiquette_inserts_new_tag():
+    """add_etiquette enables an etiquette without disturbing existing ones."""
+    data = DF_SAV.read_bytes()
+    report, top2, _ = _read_then_edit_then_roundtrip(
+        data, lambda top: df.add_etiquette(top, "academic")
+    )
+    assert report.changes
+    snaps_with_data = [
+        s for s in df.find_player_snapshots(top2) if s.has_meaningful_data()
+    ]
+    assert snaps_with_data, "expected at least one snapshot with character data"
+    for s in snaps_with_data:
+        assert s.skills is not None and s.skills.children is not None
+        tags = {f.tag for f in s.skills.children if f.tag in df.ETIQUETTE_TAGS}
+        # academic == 31; should be present after add. The original security (21)
+        # rating should also still be present — we're additive, not destructive.
+        assert df.ETIQUETTES["academic"] in tags
+        assert df.ETIQUETTES["security"] in tags
+
+
+def test_remove_etiquette_drops_field():
+    data = DF_SAV.read_bytes()
+    report, top2, _ = _read_then_edit_then_roundtrip(
+        data, lambda top: df.remove_etiquette(top, "security")
+    )
+    assert report.changes
+    snaps_with_data = [
+        s for s in df.find_player_snapshots(top2) if s.has_meaningful_data()
+    ]
+    for s in snaps_with_data:
+        if s.skills is None or s.skills.children is None:
+            continue
+        tags = {f.tag for f in s.skills.children}
+        assert df.ETIQUETTES["security"] not in tags, "security should be removed"
+
+
+def test_add_etiquette_is_idempotent():
+    data = DF_SAV.read_bytes()
+    report1, top1, out1 = _read_then_edit_then_roundtrip(
+        data, lambda top: df.add_etiquette(top, "academic")
+    )
+    # Apply again to the now-academic save; should produce no changes.
+    report2 = df.add_etiquette(top1, "academic")
+    assert not report2.changes, "second add_etiquette should be a no-op"

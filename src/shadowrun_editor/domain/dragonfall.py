@@ -315,6 +315,10 @@ def set_etiquette(top: list[Field], etiquette_name: str) -> EditReport:
     """Set the player's etiquette by *replacing* whichever etiquette tag is
     currently present. Preserves the existing skill rating value.
 
+    Single-etiquette semantics — kept for the legacy CLI command and for
+    callers that want "swap one for another". For multi-etiquette editing
+    use add_etiquette / remove_etiquette.
+
     If no etiquette is currently set on a snapshot it's left alone (we don't
     invent a value). Snapshots without character data are also skipped.
     """
@@ -349,6 +353,66 @@ def set_etiquette(top: list[Field], etiquette_name: str) -> EditReport:
             f"  player {snap.char_name or '?'}: etiquette tag {old_tag} "
             f"-> {target_tag} (value={old_value})"
         )
+    return report
+
+
+def add_etiquette(top: list[Field], etiquette_name: str, default_value: int = 1) -> EditReport:
+    """Activate an etiquette on the player. If the etiquette field is already
+    present with a non-zero rating, it's left untouched (preserves the rating
+    the player has paid karma for). If absent — or present with rating 0 —
+    it's set to `default_value` (1 by default, the rating a freshly-picked
+    etiquette starts at)."""
+    if etiquette_name not in ETIQUETTES:
+        raise ValueError(
+            f"unknown etiquette {etiquette_name!r}; valid: {sorted(ETIQUETTES)}"
+        )
+    target_tag = ETIQUETTES[etiquette_name]
+    report = EditReport(operation="add_etiquette", target=etiquette_name)
+
+    for snap in find_player_snapshots(top):
+        if not snap.has_meaningful_data():
+            continue
+        skills = snap.skills
+        if skills is None or skills.children is None:
+            continue
+        existing = next((c for c in skills.children if c.tag == target_tag), None)
+        if existing is not None and existing.wire == WIRE_VARINT and int(existing.value) > 0:  # type: ignore[arg-type]
+            continue
+        changed, old = _set_or_insert_varint(skills, target_tag, default_value)
+        if changed:
+            skills.children.sort(key=lambda f: f.tag)
+            report.add(
+                f"  player {snap.char_name or '?'}: +{etiquette_name} "
+                f"(rating {old or 0} -> {default_value})"
+            )
+    return report
+
+
+def remove_etiquette(top: list[Field], etiquette_name: str) -> EditReport:
+    """Deactivate an etiquette on the player by dropping its skill field
+    entirely. protobuf-net's default-value omission means an absent field
+    reads back as 0, so the in-game character sheet will no longer list it."""
+    if etiquette_name not in ETIQUETTES:
+        raise ValueError(
+            f"unknown etiquette {etiquette_name!r}; valid: {sorted(ETIQUETTES)}"
+        )
+    target_tag = ETIQUETTES[etiquette_name]
+    report = EditReport(operation="remove_etiquette", target=etiquette_name)
+
+    for snap in find_player_snapshots(top):
+        skills = snap.skills
+        if skills is None or skills.children is None:
+            continue
+        existing = next((c for c in skills.children if c.tag == target_tag), None)
+        if existing is None:
+            continue
+        old_value = existing.value if existing.wire == WIRE_VARINT else None
+        removed = _remove_field(skills, target_tag)
+        if removed is not None:
+            report.add(
+                f"  player {snap.char_name or '?'}: -{etiquette_name} "
+                f"(was rating {old_value})"
+            )
     return report
 
 
