@@ -27,6 +27,13 @@ final class EditorState: ObservableObject {
     // Currently open save
     @Published var openSave: OpenSave?
 
+    // Monotonic counter bumped on every open() / closeCurrent(). Each in-flight
+    // bridge call captures the counter at start; if the counter has moved by
+    // the time the bridge response comes back, the response is discarded —
+    // a newer call has already superseded it. Prevents the race where a
+    // rapid second click would let the FIRST response overwrite openSave.
+    private var openGeneration: Int = 0
+
     // User-facing error to show in a banner
     @Published var lastError: String?
 
@@ -150,10 +157,20 @@ final class EditorState: ObservableObject {
 
     func open(summary: SaveSummary) async {
         guard let b = bridge else { return }
-        // Close any previously-open save first
+        openGeneration += 1
+        let myGen = openGeneration
+        // Close any previously-open save first (and capture its handle so we
+        // don't leak handles in the bridge if the user clicks rapidly).
         await closeCurrent()
+        if myGen != openGeneration { return }   // superseded by a newer click
         do {
             let r = try await b.openSave(path: summary.sav_path)
+            // If another open() ran while we were awaiting, drop our response.
+            guard myGen == openGeneration else {
+                // Hand the now-orphaned handle back to the bridge so it can free it.
+                try? await b.close(handle: r.handle)
+                return
+            }
             openSave = OpenSave(
                 handle: r.handle, summary: r.summary, character: r.character,
                 worldFlags: r.world_flags, pendingEdits: r.pending_edits, diff: r.diff
@@ -165,6 +182,7 @@ final class EditorState: ObservableObject {
 
     func closeCurrent() async {
         guard let b = bridge, let handle = openSave?.handle else { return }
+        openGeneration += 1
         try? await b.close(handle: handle)
         openSave = nil
     }

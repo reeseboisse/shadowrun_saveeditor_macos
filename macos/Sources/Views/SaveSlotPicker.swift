@@ -13,6 +13,7 @@ import AppKit
 struct SaveSlotPicker: View {
     @EnvironmentObject var editor: EditorState
     @State private var search = ""
+    @State private var selectedID: SaveSummary.ID?
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
@@ -77,13 +78,7 @@ struct SaveSlotPicker: View {
                     EmptyState(discovered: editor.discoveredFolders, onChooseFolder: chooseFolder)
                 }
             } else {
-                List(filtered, selection: Binding<SaveSummary.ID?>(
-                    get: { editor.openSave?.summary.id },
-                    set: { id in
-                        guard let id, let s = editor.allSaves.first(where: { $0.id == id }) else { return }
-                        Task { await editor.open(summary: s) }
-                    })
-                ) { s in
+                List(filtered, selection: $selectedID) { s in
                     SaveSlotRow(summary: s)
                         .tag(s.id)
                 }
@@ -92,6 +87,23 @@ struct SaveSlotPicker: View {
                     // Pin the search bar / folder picker as a top inset so
                     // it never scrolls away with the list content.
                     searchAndToolsBar
+                }
+                // Drive open() off selection changes rather than a
+                // computed Binding. A previous attempt used Binding<ID?>
+                // with get/set, but SwiftUI's List can call set without
+                // re-reading get on the next render, leaving the visual
+                // selection out of sync with editor.openSave.
+                .onChange(of: selectedID) { newID in
+                    guard let newID,
+                          let s = editor.allSaves.first(where: { $0.id == newID })
+                    else { return }
+                    Task { await editor.open(summary: s) }
+                }
+                // Sync the other direction: when openSave changes externally
+                // (e.g. after a save reload or an open-from-elsewhere flow),
+                // the highlighted row tracks it.
+                .onChange(of: editor.openSave?.summary.id) { newID in
+                    if selectedID != newID { selectedID = newID }
                 }
             }
         }
