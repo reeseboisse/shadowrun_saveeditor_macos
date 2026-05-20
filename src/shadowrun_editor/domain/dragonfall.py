@@ -247,6 +247,21 @@ def find_player_snapshots(top: list[Field]) -> list[PlayerSnapshot]:
     return out
 
 
+def first_player_char_name(top: list[Field]) -> str | None:
+    """Lightweight: stop at the first player snapshot we find and return its
+    char_name. Skips the full tree walk that find_player_snapshots does, so
+    the save-slot picker can build summaries for 100+ saves quickly."""
+    for f in walk(top):
+        if f.wire == WIRE_LEN and f.children is not None and _is_player_container(f.children):
+            name_f = find_first(f.children, 8, WIRE_LEN)
+            if name_f is not None and isinstance(name_f.value, (bytes, bytearray)):
+                try:
+                    return name_f.value.decode("utf-8", errors="replace")
+                except UnicodeDecodeError:
+                    return None
+    return None
+
+
 def primary_player_snapshot(top: list[Field]) -> PlayerSnapshot | None:
     """Pick the snapshot most representative of the player's *current* state
     for display.

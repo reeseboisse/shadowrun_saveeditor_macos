@@ -25,7 +25,9 @@ Design notes:
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as _dt
+import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -104,9 +106,22 @@ class CharacterView:
 
 @dataclass
 class _FileSnapshot:
-    """Per-file state inside a SaveSession."""
+    """Per-file state inside a SaveSession. Bytes are read lazily — only the
+    .sav is loaded eagerly; .srt files are deferred until an edit commit
+    actually needs to rewrite them, since the slot picker doesn't care
+    about scene snapshots."""
     path: Path
-    original_bytes: bytes
+    _bytes: bytes | None = None  # None = not loaded yet
+
+    @property
+    def original_bytes(self) -> bytes:
+        if self._bytes is None:
+            self._bytes = self.path.read_bytes()
+        return self._bytes
+
+    @original_bytes.setter
+    def original_bytes(self, b: bytes) -> None:
+        self._bytes = b
 
 
 class SaveSession:
@@ -114,9 +129,14 @@ class SaveSession:
 
     def __init__(self, slot: SaveSlot):
         self.slot = slot
-        self.game = detect_game(slot.sav_path.read_bytes())
+        # Read the .sav eagerly — needed for game detection and the summary.
+        sav_bytes = slot.sav_path.read_bytes()
+        self.game = detect_game(sav_bytes)
+        sav_snap = _FileSnapshot(slot.sav_path)
+        sav_snap.original_bytes = sav_bytes  # already in memory, skip another read
         self._files: list[_FileSnapshot] = [
-            _FileSnapshot(p, p.read_bytes()) for p in slot.all_protobuf_files()
+            sav_snap,
+            *(_FileSnapshot(p) for p in slot.srt_paths),
         ]
         self._edits: list[PendingEdit] = []
 
@@ -155,6 +175,11 @@ class SaveSession:
         return bool(self._edits)
 
     def summary(self) -> SaveSummary:
+        """Lightweight per-slot metadata for the picker. Parses the .sav but
+        only scans the protobuf tree far enough to extract display_name,
+        time_utc, and the first player snapshot's char_name. The full
+        character sheet is built lazily by `character()` only when the user
+        actually opens this save."""
         sav_top = parse_toplevel(self._files[0].original_bytes)
         # display_name and scene_name live on the SaveGame top-level
         display = None
@@ -169,7 +194,7 @@ class SaveSession:
                     pass
             elif f.tag == 3 and f.wire == 0:
                 time_utc = int(f.value)  # type: ignore[arg-type]
-        char_view = self._character_view(sav_top) if self.supported else None
+        char_name = df.first_player_char_name(sav_top) if self.supported else None
         # Scene name from the .srt filename (since .sav doesn't have one),
         # if there's exactly one .srt — saves usually pin a "last scene".
         scene_name: str | None = None
@@ -187,7 +212,7 @@ class SaveSession:
             game=self.game,
             supported=self.supported,
             display_name=display,
-            char_name=char_view.name if char_view else None,
+            char_name=char_name,
             time_utc=time_utc,
             scene_name=scene_name,
         )
@@ -533,9 +558,24 @@ def discover_diagnostics() -> dict[str, Any]:
     return info
 
 
+def _summarize_one(slot: SaveSlot) -> SaveSummary | None:
+    """Pure function (picklable) for ProcessPoolExecutor workers."""
+    try:
+        return SaveSession(slot).summary()
+    except Exception:
+        return None
+
+
 def scan_all_saves(folders: list[Path] | None = None) -> list[SaveSummary]:
     """Scan one or more folders (or, if None, the default macOS folders for
-    all three games) and return a flat list of SaveSummary."""
+    all three games) and return a flat list of SaveSummary.
+
+    Protobuf parsing dominates the cost (~150 ms per save for Hong Kong's
+    1.2 MB .sav files). For users with full save corpuses (100+ slots
+    across the trilogy) that's >10 s sequentially. Parallelize across CPU
+    cores via ProcessPoolExecutor — each worker parses one slot. This
+    drops the total to roughly (longest single parse + pool startup).
+    """
     targets: list[Path]
     if folders is None:
         targets = []
@@ -546,15 +586,27 @@ def scan_all_saves(folders: list[Path] | None = None) -> list[SaveSummary]:
                     targets.append(p)
     else:
         targets = list(folders)
-    out: list[SaveSummary] = []
+
+    slots: list[SaveSlot] = []
     for folder in targets:
-        for slot in scan_folder(folder):
-            try:
-                sess = SaveSession(slot)
-                out.append(sess.summary())
-            except Exception:
-                # Skip any malformed slot rather than failing the whole scan
-                continue
+        try:
+            slots.extend(scan_folder(folder))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+    if not slots:
+        return []
+
+    # For tiny corpuses the process-pool spawn cost outweighs parallelism;
+    # use the in-process path. For larger sets, parallelize.
+    if len(slots) <= 4:
+        return [s for s in (_summarize_one(slot) for slot in slots) if s is not None]
+
+    workers = min(len(slots), os.cpu_count() or 4, 8)
+    out: list[SaveSummary] = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+        for summary in pool.map(_summarize_one, slots, chunksize=2):
+            if summary is not None:
+                out.append(summary)
     return out
 
 
