@@ -182,7 +182,6 @@ final class EditorState: ObservableObject {
 
     func closeCurrent() async {
         guard let b = bridge, let handle = openSave?.handle else { return }
-        openGeneration += 1
         try? await b.close(handle: handle)
         openSave = nil
     }

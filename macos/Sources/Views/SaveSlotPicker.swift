@@ -93,17 +93,18 @@ struct SaveSlotPicker: View {
                 // with get/set, but SwiftUI's List can call set without
                 // re-reading get on the next render, leaving the visual
                 // selection out of sync with editor.openSave.
+                //
+                // The picker is the source of truth for selection — we do
+                // NOT mirror editor.openSave?.id back into selectedID. Doing
+                // so caused selection oscillation: closeCurrent() during a
+                // row swap sets openSave to nil briefly, and a reverse sync
+                // would then clear selectedID, deselecting the row the user
+                // just clicked.
                 .onChange(of: selectedID) { newID in
                     guard let newID,
                           let s = editor.allSaves.first(where: { $0.id == newID })
                     else { return }
                     Task { await editor.open(summary: s) }
-                }
-                // Sync the other direction: when openSave changes externally
-                // (e.g. after a save reload or an open-from-elsewhere flow),
-                // the highlighted row tracks it.
-                .onChange(of: editor.openSave?.summary.id) { newID in
-                    if selectedID != newID { selectedID = newID }
                 }
             }
         }
