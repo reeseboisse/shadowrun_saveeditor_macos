@@ -264,9 +264,35 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
 
 def serve(stdin: io.TextIOBase | None = None, stdout: io.TextIOBase | None = None) -> int:
     """Read newline-delimited JSON requests from stdin and write responses to
-    stdout, one per line. Returns 0 on EOF."""
+    stdout, one per line. Returns 0 on EOF.
+
+    Output goes through the underlying binary file descriptor with os.write,
+    so:
+      * Python's text-mode encoding / line-ending translation can't insert
+        extra newlines.
+      * Each os.write call attempts atomic write to the pipe — even if some
+        other process inherited the same fd (a multiprocessing worker, a
+        late buffer flush, anything), the JSON line stays whole or fails
+        cleanly rather than interleaving mid-byte.
+    """
+    import os as _os
     rin = stdin if stdin is not None else sys.stdin
-    wout = stdout if stdout is not None else sys.stdout
+    wout: io.TextIOBase | None = stdout
+
+    if wout is None:
+        out_fd = sys.stdout.fileno()
+        def _emit(s: str) -> None:
+            data = s.encode("utf-8")
+            view = memoryview(data)
+            while view:
+                n = _os.write(out_fd, view)
+                view = view[n:]
+    else:
+        # Test path: write to whatever TextIO the caller passed in.
+        def _emit(s: str) -> None:
+            wout.write(s)
+            wout.flush()
+
     for line in rin:
         line = line.strip()
         if not line:
@@ -274,13 +300,10 @@ def serve(stdin: io.TextIOBase | None = None, stdout: io.TextIOBase | None = Non
         try:
             req = json.loads(line)
         except json.JSONDecodeError as e:
-            wout.write(json.dumps({"id": None, "error": {"code": "bad_json", "message": str(e)}}))
-            wout.write("\n"); wout.flush()
+            _emit(json.dumps({"id": None, "error": {"code": "bad_json", "message": str(e)}}) + "\n")
             continue
         resp = dispatch(req)
-        wout.write(json.dumps(resp))
-        wout.write("\n")
-        wout.flush()
+        _emit(json.dumps(resp) + "\n")
     return 0
 
 
