@@ -270,7 +270,7 @@ struct SaveSlotRow: View {
                     // user's locale (12h with AM/PM in en_US, 24h elsewhere).
                     Text(date, format: .dateTime
                         .month(.abbreviated).day().year()
-                        .hour().minute())
+                        .hour().minute().second())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
