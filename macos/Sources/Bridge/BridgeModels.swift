@@ -91,13 +91,17 @@ struct WorldFlagView: Codable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
-        kind = try c.decode(String.self, forKey: .kind)
-        scope_name = try c.decodeIfPresent(String.self, forKey: .scope_name)
+        // Lenient decoding: a malformed or partial flag entry (missing
+        // kind/value) should degrade to "unknown / —" rather than fail the
+        // entire response. The picker has hundreds of flags per save and a
+        // single weird one shouldn't blank out the whole list.
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "unknown"
+        scope_name = (try? c.decodeIfPresent(String.self, forKey: .scope_name)) ?? nil
         switch kind {
-        case "int":    value = .int(try c.decode(Int.self, forKey: .value))
-        case "bool":   value = .bool(try c.decode(Bool.self, forKey: .value))
-        case "float":  value = .double(try c.decode(Double.self, forKey: .value))
-        case "string": value = .string(try c.decode(String.self, forKey: .value))
+        case "int":    value = .int((try? c.decode(Int.self, forKey: .value)) ?? 0)
+        case "bool":   value = .bool((try? c.decode(Bool.self, forKey: .value)) ?? false)
+        case "float":  value = .double((try? c.decode(Double.self, forKey: .value)) ?? 0)
+        case "string": value = .string((try? c.decode(String.self, forKey: .value)) ?? "")
         default:       value = .empty
         }
     }

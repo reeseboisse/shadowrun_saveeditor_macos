@@ -316,15 +316,33 @@ class SaveSession:
     def world_flags(self) -> list[WorldFlagView]:
         if not self.supported:
             return []
+        import sys as _sys
         sav_top = self._current_sav_tree()
         # Dedupe to one row per name (latest value wins, same as the CLI)
         latest: dict[str, WorldFlagView] = {}
         for fl in df.iter_world_flags(sav_top):
-            kind, value = fl.value()
+            try:
+                kind, value = fl.value()
+            except Exception as e:
+                print(f"[bridge] flag {fl.name!r}: value() raised: {e}",
+                      file=_sys.stderr)
+                kind, value = "unknown", None
             scope = self._dragonfall_scope_name(fl.scope)
             # Best-effort JSON-friendly value
-            if isinstance(value, bytes):
+            if isinstance(value, (bytes, bytearray)):
                 value = value.hex()
+            elif value is not None and not isinstance(value, (int, float, bool, str)):
+                # Anything exotic gets stringified so json.dumps doesn't choke
+                # and the Swift side doesn't see a missing key.
+                print(f"[bridge] flag {fl.name!r}: unexpected value type "
+                      f"{type(value).__name__}, coercing to str",
+                      file=_sys.stderr)
+                value = str(value)
+            # Sanity-check the name too. A long, non-ASCII, or newline-laden
+            # name is probably a parser misread — log it so we can investigate.
+            if len(fl.name) > 200 or any(c in fl.name for c in "\n\r\t"):
+                print(f"[bridge] suspicious flag name (len={len(fl.name)}): "
+                      f"{fl.name[:80]!r}...", file=_sys.stderr)
             latest[fl.name] = WorldFlagView(
                 name=fl.name,
                 kind=kind,
