@@ -318,10 +318,18 @@ def build_parser() -> argparse.ArgumentParser:
     _edit_common(sp)
     sp.set_defaults(func=_make_int_edit_cmd("set_karma", "set_unspent_karma"))
 
-    sp = sub.add_parser("set-nuyen", help="Set nuyen on every story block")
+    sp = sub.add_parser("set-nuyen", help="Set nuyen on the latest story block")
     sp.add_argument("value", type=int)
     _edit_common(sp)
     sp.set_defaults(func=_make_int_edit_cmd("set_nuyen", "set_nuyen"))
+
+    sp = sub.add_parser(
+        "donate-to-alice-fund",
+        help="Dragonfall: paired +AliceFunds / -nuyen on the latest block",
+    )
+    sp.add_argument("amount", type=int, help="Amount of nuyen to donate")
+    _edit_common(sp)
+    sp.set_defaults(func=_make_int_edit_cmd("donate_to_alice_fund", "donate_to_alice_fund"))
 
     sp = sub.add_parser("set-attribute", help="Set a player attribute")
     sp.add_argument("attribute", choices=sorted(df.ATTRIBUTES.keys()))
