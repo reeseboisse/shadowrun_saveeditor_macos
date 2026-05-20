@@ -53,9 +53,17 @@ struct CharacterView: Codable, Hashable {
     var karma: Int?
     var unspent_karma: Int?
     var nuyen: Int?
+    var alice_fund: Int?
     var attributes: [String: Int]
     var skills: [String: Int]
     var etiquettes: [String: Int]
+    // Game-specific editor surfaces. Returns excludes paranormal/infected
+    // etiquettes and chi_casting/drone_combat/drain_resistance skills;
+    // Dragonfall excludes paranormal/infected and chi_casting. The UI
+    // iterates these instead of any hardcoded list.
+    var available_etiquettes: [String]
+    var available_attributes: [String]
+    var available_skills: [String]
     var snapshot_count: Int
 }
 

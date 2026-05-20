@@ -265,6 +265,29 @@ def _make_named_int_edit_cmd(name: str, fn_name: str, arg_name: str) -> Callable
     return _run
 
 
+def cmd_donate_to_alice_fund(args: argparse.Namespace) -> int:
+    """Dragonfall-only edit. Refuse on Returns/HK rather than silently
+    no-op'ing (Global_AliceFunds doesn't exist in those campaigns)."""
+    slot = _resolve_slot(args.slot)
+    game = detect_game(slot.sav_path.read_bytes())
+    if game != "dragonfall":
+        print(
+            f"error: donate-to-alice-fund is a Dragonfall-only edit; "
+            f"this slot reports game={game!r}",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"Slot: {slot.uuid}  ({1 + len(slot.srt_paths)} file(s))")
+    changed = _apply_to_slot(
+        slot,
+        lambda top: df.donate_to_alice_fund(top, args.value),
+        dry_run=args.dry_run,
+        no_backup=args.no_backup,
+    )
+    print(f"\n{changed} file(s) changed")
+    return 0
+
+
 def cmd_list_flags(args: argparse.Namespace) -> int:
     p = Path(args.path)
     if p.is_dir():
@@ -329,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("value", type=int, help="Amount of nuyen to donate")
     _edit_common(sp)
-    sp.set_defaults(func=_make_int_edit_cmd("donate_to_alice_fund", "donate_to_alice_fund"))
+    sp.set_defaults(func=cmd_donate_to_alice_fund)
 
     sp = sub.add_parser("set-attribute", help="Set a player attribute")
     sp.add_argument("attribute", choices=sorted(df.ATTRIBUTES.keys()))

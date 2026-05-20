@@ -10,12 +10,16 @@
 import SwiftUI
 import AppKit
 
-private let attributeOrder = [
-    "body", "quickness", "strength", "charisma",
-    "intelligence", "willpower", "essence", "magic", "reaction",
-]
-
-private let skillGroups: [(String, [String])] = [
+// Canonical UI grouping for skills — only used to organize the form into
+// Combat / Magic / Tech / Other. The actual list of skills rendered per
+// group is filtered against the open save's `available_skills`, so e.g.
+// Returns hides chi_casting / drone_combat / drain_resistance and the
+// "Magic" group still appears for Returns (it has other entries) while
+// any group that ends up empty after filtering is hidden entirely.
+//
+// Attribute and etiquette order come straight from the adapter's
+// `available_*` lists (which preserve the engine's canonical order).
+private let skillGroupingHint: [(String, [String])] = [
     ("Combat", [
         "ranged_combat", "close_combat", "throwing_weapons", "dodge",
     ]),
@@ -30,11 +34,6 @@ private let skillGroups: [(String, [String])] = [
     ("Other", [
         "athletics", "stealth", "negotiation",
     ]),
-]
-
-private let etiquetteNames = [
-    "corporate", "security", "gang", "paranormal", "socialite",
-    "infected", "shadowrunner", "street", "academic",
 ]
 
 struct CharacterEditorView: View {
@@ -125,7 +124,7 @@ struct CharacterEditorView: View {
     private func etiquettesSection(_ c: CharacterView) -> some View {
         GroupBox("Etiquettes") {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(etiquetteNames, id: \.self) { name in
+                ForEach(c.available_etiquettes, id: \.self) { name in
                     let rating = c.etiquettes[name] ?? 0
                     let isActive = rating > 0
                     HStack {
@@ -165,7 +164,7 @@ struct CharacterEditorView: View {
     private func attributesSection(_ c: CharacterView) -> some View {
         GroupBox("Attributes") {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(attributeOrder, id: \.self) { name in
+                ForEach(c.available_attributes, id: \.self) { name in
                     HStack {
                         Text(prettify(name))
                             .frame(minWidth: 120, alignment: .leading)
@@ -183,9 +182,29 @@ struct CharacterEditorView: View {
     }
 
     private func skillsSection(_ c: CharacterView) -> some View {
-        GroupBox("Skills") {
+        // Filter each canonical group to skills actually available in this
+        // game. A group whose every member got filtered out is dropped from
+        // the form entirely. Any skill the adapter exposes but our grouping
+        // hint doesn't mention gets collected into a trailing "Other" bucket
+        // so we never silently hide a real skill.
+        let availableSet = Set(c.available_skills)
+        var grouped: [(String, [String])] = skillGroupingHint.compactMap { group, names in
+            let filtered = names.filter { availableSet.contains($0) }
+            return filtered.isEmpty ? nil : (group, filtered)
+        }
+        let placed = Set(grouped.flatMap { $0.1 })
+        let leftover = c.available_skills.filter { !placed.contains($0) }
+        if !leftover.isEmpty {
+            // Merge into existing "Other" if present, otherwise add a new one.
+            if let idx = grouped.firstIndex(where: { $0.0 == "Other" }) {
+                grouped[idx] = ("Other", grouped[idx].1 + leftover)
+            } else {
+                grouped.append(("Other", leftover))
+            }
+        }
+        return GroupBox("Skills") {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(skillGroups, id: \.0) { group, skills in
+                ForEach(grouped, id: \.0) { group, skills in
                     Text(group).font(.headline).foregroundStyle(.secondary)
                     ForEach(skills, id: \.self) { name in
                         HStack {

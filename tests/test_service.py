@@ -40,13 +40,13 @@ def test_summary_dragonfall(df_session: SaveSession) -> None:
     assert s.display_name and "Dragonfall" in s.display_name
 
 
-def test_summary_returns_is_recognized_but_unsupported(tmp_path: Path) -> None:
+def test_summary_returns_is_recognized_and_supported(tmp_path: Path) -> None:
     dst = tmp_path / "rt"
     shutil.copytree(RT_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
     sess = SaveSession.open(dst)
     s = sess.summary()
     assert s.game == "returns"
-    assert s.supported is False
+    assert s.supported is True
 
 
 def test_summary_hongkong_is_recognized_but_unsupported(tmp_path: Path) -> None:
@@ -106,11 +106,78 @@ def test_commit_writes_files_and_creates_backups(df_session: SaveSession) -> Non
 
 
 def test_unsupported_game_raises_on_edit(tmp_path: Path) -> None:
-    dst = tmp_path / "rt"
-    shutil.copytree(RT_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
     sess = SaveSession.open(dst)
     with pytest.raises(UnsupportedGame):
         sess.queue_set_etiquette("academic")
+
+
+# --------------------------------------------------------------------------- #
+# Returns coverage                                                            #
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def rt_session(tmp_path: Path) -> SaveSession:
+    dst = tmp_path / "rt"
+    shutil.copytree(RT_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    return SaveSession.open(dst)
+
+
+def test_returns_session_opens_and_round_trips(rt_session: SaveSession) -> None:
+    """With no edits queued, commit is a no-op and bytes are unchanged."""
+    assert rt_session.game == "returns"
+    assert rt_session.supported is True
+    # No edits → commit writes nothing.
+    assert rt_session.commit() == []
+    # And the raw bytes parse + reserialize identically (engine round-trip).
+    from shadowrun_editor.protobuf_engine import parse_toplevel, serialize_message
+    sav = rt_session.slot.sav_path.read_bytes()
+    assert serialize_message(parse_toplevel(sav)) == sav
+
+
+def test_returns_character_view_has_available_lists(rt_session: SaveSession) -> None:
+    c = rt_session.character()
+    assert c is not None
+    # HK-only etiquettes must NOT appear in the Returns available set.
+    assert "paranormal" not in c.available_etiquettes
+    assert "infected" not in c.available_etiquettes
+    # Returns drops three skills compared to the full HK set.
+    assert "chi_casting" not in c.available_skills
+    assert "drone_combat" not in c.available_skills
+    assert "drain_resistance" not in c.available_skills
+    # Alice Fund is Dragonfall-only.
+    assert c.alice_fund is None
+
+
+def test_returns_set_etiquette_round_trips(rt_session: SaveSession) -> None:
+    rt_session.queue_set_etiquette("academic")
+    written = rt_session.commit()
+    assert written, "expected at least one file to change"
+    sess2 = SaveSession.open(rt_session.slot.sav_path)
+    c = sess2.character()
+    assert c is not None
+    assert "academic" in c.etiquettes
+
+
+def test_returns_rejects_hk_only_etiquette(rt_session: SaveSession) -> None:
+    with pytest.raises(ValueError):
+        rt_session.queue_add_etiquette("paranormal")
+    with pytest.raises(ValueError):
+        rt_session.queue_add_etiquette("infected")
+
+
+def test_returns_rejects_hk_only_skill(rt_session: SaveSession) -> None:
+    with pytest.raises(ValueError):
+        rt_session.queue_set_skill("chi_casting", 3)
+    with pytest.raises(ValueError):
+        rt_session.queue_set_skill("drone_combat", 3)
+
+
+def test_returns_has_no_alice_fund(rt_session: SaveSession) -> None:
+    c = rt_session.character()
+    assert c is not None
+    assert c.alice_fund is None
 
 
 def test_world_flags_listed_with_value_kinds(df_session: SaveSession) -> None:
