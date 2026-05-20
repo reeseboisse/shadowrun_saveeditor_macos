@@ -730,11 +730,15 @@ def scan_all_saves(folders: list[Path] | None = None) -> list[SaveSummary]:
     """Scan one or more folders (or, if None, the default macOS folders for
     all three games) and return a flat list of SaveSummary.
 
-    Protobuf parsing dominates the cost (~150 ms per save for Hong Kong's
-    1.2 MB .sav files). For users with full save corpuses (100+ slots
-    across the trilogy) that's >10 s sequentially. Parallelize across CPU
-    cores via ProcessPoolExecutor — each worker parses one slot. This
-    drops the total to roughly (longest single parse + pool startup).
+    Runs sequentially. An earlier version parallelized this across a
+    ProcessPoolExecutor for ~5x speedup on large corpuses, but the pool's
+    worker processes shared the bridge's stdout fd. Between Python process
+    spawn and the worker's initializer running there's a brief window where
+    arbitrary import-time output could leak into the JSON-RPC stream and
+    corrupt in-flight responses. The corruption was confirmed in user logs;
+    the speedup wasn't worth the reliability cost. Future optimization:
+    use a disk-backed cache keyed by (path, mtime, size) so unchanged saves
+    skip parsing entirely on subsequent launches.
     """
     targets: list[Path]
     if folders is None:
@@ -756,21 +760,7 @@ def scan_all_saves(folders: list[Path] | None = None) -> list[SaveSummary]:
     if not slots:
         return []
 
-    # For tiny corpuses the process-pool spawn cost outweighs parallelism;
-    # use the in-process path. For larger sets, parallelize.
-    if len(slots) <= 4:
-        return [s for s in (_summarize_one(slot) for slot in slots) if s is not None]
-
-    workers = min(len(slots), os.cpu_count() or 4, 8)
-    out: list[SaveSummary] = []
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=_worker_init,
-    ) as pool:
-        for summary in pool.map(_summarize_one, slots, chunksize=2):
-            if summary is not None:
-                out.append(summary)
-    return out
+    return [s for s in (_summarize_one(slot) for slot in slots) if s is not None]
 
 
 # --------------------------------------------------------------------------- #
