@@ -29,7 +29,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable
 
-from .domain import dragonfall as df
+from .domain import _common as df  # shared engine; per-game adapter selected at session creation
+from .domain import dragonfall, returns
 from .protobuf_engine import parse_toplevel, serialize_message, Field, WIRE_VARINT
 from .savefile import (
     SaveSlot,
@@ -40,8 +41,24 @@ from .savefile import (
 )
 
 
-SUPPORTED_GAMES = {"dragonfall"}     # games whose edit ops are wired up
+# Per-game adapter modules. Each exposes (at minimum) AVAILABLE_ETIQUETTES
+# and re-exports the shared editing operations from `domain._common`.
+# Dragonfall additionally exports donate_to_alice_fund / read_alice_fund.
+_ADAPTERS: dict[str, Any] = {
+    "dragonfall": dragonfall,
+    "returns":    returns,
+}
+SUPPORTED_GAMES = set(_ADAPTERS.keys())
 KNOWN_GAMES = {"dragonfall", "returns", "hongkong"}
+
+
+def _adapter_for(game: str):
+    a = _ADAPTERS.get(game)
+    if a is None:
+        raise UnsupportedGame(
+            f"editing not yet implemented for game={game!r} (supported: {sorted(_ADAPTERS)})"
+        )
+    return a
 
 
 class UnsupportedGame(Exception):
@@ -94,7 +111,15 @@ class CharacterView:
     alice_fund: int | None              # Dragonfall-only; None if flag absent
     attributes: dict[str, int]
     skills: dict[str, int]
-    etiquettes: dict[str, int]
+    etiquettes: dict[str, int]          # currently-active etiquettes (with ratings)
+    # Game-specific UI surfaces. The engine knows the canonical full
+    # inventory of attributes/skills/etiquettes (so any save round-trips
+    # cleanly), but the editor only exposes the subsets actually used by
+    # this game's scripts. The UI iterates these lists for the rendered
+    # form fields — see plan §3.1 game-neutrality requirement.
+    available_etiquettes: list[str]
+    available_attributes: list[str]
+    available_skills: list[str]
     snapshot_count: int
 
 
@@ -223,6 +248,9 @@ class SaveSession:
         # Read the .sav eagerly — needed for game detection and the summary.
         sav_bytes = slot.sav_path.read_bytes()
         self.game = detect_game(sav_bytes)
+        # Per-game adapter for editing operations; None for unsupported games
+        # (the picker still lists those saves but every queue_* raises).
+        self._adapter = _ADAPTERS.get(self.game)
         sav_snap = _FileSnapshot(slot.sav_path)
         sav_snap.original_bytes = sav_bytes  # already in memory, skip another read
         self._files: list[_FileSnapshot] = [
@@ -357,8 +385,11 @@ class SaveSession:
 
     def queue_set_etiquette(self, etiquette: str) -> PendingEdit:
         self._require_supported()
-        if etiquette not in df.ETIQUETTES:
-            raise ValueError(f"unknown etiquette: {etiquette}")
+        if etiquette not in self._adapter.AVAILABLE_ETIQUETTES:
+            raise ValueError(
+                f"etiquette {etiquette!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_ETIQUETTES)}"
+            )
         e = PendingEdit(
             op="set_etiquette",
             args={"etiquette": etiquette},
@@ -369,8 +400,11 @@ class SaveSession:
 
     def queue_add_etiquette(self, etiquette: str) -> PendingEdit:
         self._require_supported()
-        if etiquette not in df.ETIQUETTES:
-            raise ValueError(f"unknown etiquette: {etiquette}")
+        if etiquette not in self._adapter.AVAILABLE_ETIQUETTES:
+            raise ValueError(
+                f"etiquette {etiquette!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_ETIQUETTES)}"
+            )
         e = PendingEdit(
             op="add_etiquette",
             args={"etiquette": etiquette},
@@ -381,8 +415,11 @@ class SaveSession:
 
     def queue_remove_etiquette(self, etiquette: str) -> PendingEdit:
         self._require_supported()
-        if etiquette not in df.ETIQUETTES:
-            raise ValueError(f"unknown etiquette: {etiquette}")
+        if etiquette not in self._adapter.AVAILABLE_ETIQUETTES:
+            raise ValueError(
+                f"etiquette {etiquette!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_ETIQUETTES)}"
+            )
         e = PendingEdit(
             op="remove_etiquette",
             args={"etiquette": etiquette},
@@ -393,8 +430,11 @@ class SaveSession:
 
     def queue_set_attribute(self, attr: str, value: int) -> PendingEdit:
         self._require_supported()
-        if attr not in df.ATTRIBUTES:
-            raise ValueError(f"unknown attribute: {attr}")
+        if attr not in self._adapter.AVAILABLE_ATTRIBUTES:
+            raise ValueError(
+                f"attribute {attr!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_ATTRIBUTES)}"
+            )
         e = PendingEdit("set_attribute", {"attr": attr, "value": int(value)},
                         f"{attr} = {value}")
         self._append_edit(e)
@@ -402,8 +442,11 @@ class SaveSession:
 
     def queue_set_skill(self, skill: str, value: int) -> PendingEdit:
         self._require_supported()
-        if skill not in df.SKILLS:
-            raise ValueError(f"unknown skill: {skill}")
+        if skill not in self._adapter.AVAILABLE_SKILLS:
+            raise ValueError(
+                f"skill {skill!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_SKILLS)}"
+            )
         e = PendingEdit("set_skill", {"skill": skill, "value": int(value)},
                         f"{skill} = {value}")
         self._append_edit(e)
@@ -538,6 +581,12 @@ class SaveSession:
         sheet = df.CharacterSheet.from_top(sav_top)
         if sheet is None:
             return None
+        adapter = self._adapter
+        # Alice Fund only exists in Dragonfall; gate by adapter capability.
+        alice_fund = None
+        read_alice = getattr(adapter, "read_alice_fund", None)
+        if read_alice is not None:
+            alice_fund = read_alice(sav_top)
         return CharacterView(
             name=sheet.name,
             prefab=sheet.prefab,
@@ -546,10 +595,13 @@ class SaveSession:
             karma=sheet.karma,
             unspent_karma=sheet.unspent_karma,
             nuyen=df.read_nuyen(sav_top),
-            alice_fund=df.read_alice_fund(sav_top),
+            alice_fund=alice_fund,
             attributes=dict(sheet.attributes),
             skills=dict(sheet.skills),
             etiquettes=dict(sheet.etiquettes),
+            available_etiquettes=list(adapter.AVAILABLE_ETIQUETTES.keys()),
+            available_attributes=list(adapter.AVAILABLE_ATTRIBUTES.keys()),
+            available_skills=list(adapter.AVAILABLE_SKILLS.keys()),
             snapshot_count=sheet.snapshot_count,
         )
 
