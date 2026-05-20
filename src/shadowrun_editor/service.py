@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .domain import dragonfall as df
-from .protobuf_engine import parse_toplevel, serialize_message, Field
+from .protobuf_engine import parse_toplevel, serialize_message, Field, WIRE_VARINT
 from .savefile import (
     SaveSlot,
     atomic_write_bytes,
@@ -104,6 +104,95 @@ class CharacterView:
 # Session                                                                     #
 # --------------------------------------------------------------------------- #
 
+def _edit_target_key(e: PendingEdit) -> tuple | None:
+    """An immutable key identifying *which logical field* this edit targets.
+    Edits with the same key are mutually exclusive — only the latest one
+    matters. Return None for edits whose semantics don't fit the swap-
+    supersedes model (the legacy set_etiquette swap is hard to define
+    cleanly here so it skips deduplication)."""
+    a = e.args
+    if e.op == "set_attribute":
+        return ("attribute", a["attr"])
+    if e.op == "set_skill":
+        return ("skill", a["skill"])
+    if e.op == "set_unspent_karma":
+        return ("unspent_karma",)
+    if e.op == "set_nuyen":
+        return ("nuyen",)
+    if e.op == "set_world_flag":
+        return ("world_flag", a["name"])
+    if e.op in ("add_etiquette", "remove_etiquette"):
+        return ("etiquette_active", a["etiquette"])
+    return None
+
+
+def _edit_is_noop(e: PendingEdit, original_top: list[Field]) -> bool:
+    """Return True if applying `e` would not change the *displayed* state of
+    the save. The UI shows the most recent player snapshot, so a "revert" is
+    determined relative to that snapshot — not against every historical
+    snapshot in the file. (Stale earlier snapshots stay stale; that matches
+    the editor's behavior before any edit was queued.)"""
+    a = e.args
+    primary = df.primary_player_snapshot(original_top)
+
+    if e.op == "set_attribute":
+        tag = df.ATTRIBUTES.get(a["attr"])
+        if tag is None or primary is None:
+            return False
+        return _varint_in(primary.attributes, tag) == int(a["value"])
+
+    if e.op == "set_skill":
+        tag = df.SKILLS.get(a["skill"])
+        if tag is None or primary is None:
+            return False
+        return _varint_in(primary.skills, tag) == int(a["value"])
+
+    if e.op == "set_unspent_karma":
+        if primary is None:
+            return False
+        return (primary.unspent_karma or 0) == int(a["value"])
+
+    if e.op == "set_nuyen":
+        current = df.read_nuyen(original_top)
+        return current is not None and current == int(a["value"])
+
+    if e.op == "add_etiquette":
+        tag = df.ETIQUETTES.get(a["etiquette"])
+        if tag is None or primary is None:
+            return False
+        return _varint_in(primary.skills, tag) > 0
+
+    if e.op == "remove_etiquette":
+        tag = df.ETIQUETTES.get(a["etiquette"])
+        if tag is None or primary is None:
+            return False
+        return _varint_in(primary.skills, tag) == 0
+
+    if e.op == "set_world_flag":
+        name = a["name"]
+        kind = a["kind"]
+        target = a["value"]
+        for fl in df.iter_world_flags(original_top):
+            if fl.name != name:
+                continue
+            cur_kind, cur_value = fl.value()
+            return cur_kind == kind and cur_value == target
+        return False
+
+    return False
+
+
+def _varint_in(msg: Field | None, tag: int) -> int:
+    """Return the signed-int32 value of varint field `tag` inside `msg`, or 0
+    if absent. Used by the no-op checks to compare displayed-state values."""
+    if msg is None or msg.children is None:
+        return 0
+    f = next((c for c in msg.children if c.tag == tag), None)
+    if f is None or f.wire != WIRE_VARINT:
+        return 0
+    return df._signed_int32(int(f.value))  # type: ignore[arg-type]
+
+
 @dataclass
 class _FileSnapshot:
     """Per-file state inside a SaveSession. Bytes are read lazily — only the
@@ -139,6 +228,7 @@ class SaveSession:
             *(_FileSnapshot(p) for p in slot.srt_paths),
         ]
         self._edits: list[PendingEdit] = []
+        self._cached_original_top: list[Field] | None = None
 
     # ----- factories ----- #
 
@@ -254,7 +344,7 @@ class SaveSession:
             args={"etiquette": etiquette},
             description=f"Etiquette → {etiquette}",
         )
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_add_etiquette(self, etiquette: str) -> PendingEdit:
@@ -266,7 +356,7 @@ class SaveSession:
             args={"etiquette": etiquette},
             description=f"Enable etiquette: {etiquette}",
         )
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_remove_etiquette(self, etiquette: str) -> PendingEdit:
@@ -278,7 +368,7 @@ class SaveSession:
             args={"etiquette": etiquette},
             description=f"Disable etiquette: {etiquette}",
         )
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_set_attribute(self, attr: str, value: int) -> PendingEdit:
@@ -287,7 +377,7 @@ class SaveSession:
             raise ValueError(f"unknown attribute: {attr}")
         e = PendingEdit("set_attribute", {"attr": attr, "value": int(value)},
                         f"{attr} = {value}")
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_set_skill(self, skill: str, value: int) -> PendingEdit:
@@ -296,21 +386,21 @@ class SaveSession:
             raise ValueError(f"unknown skill: {skill}")
         e = PendingEdit("set_skill", {"skill": skill, "value": int(value)},
                         f"{skill} = {value}")
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_set_karma(self, value: int) -> PendingEdit:
         self._require_supported()
         e = PendingEdit("set_unspent_karma", {"value": int(value)},
                         f"unspent karma = {value}")
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_set_nuyen(self, value: int) -> PendingEdit:
         self._require_supported()
         e = PendingEdit("set_nuyen", {"value": int(value)},
                         f"nuyen = {value}")
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def queue_set_world_flag(self, name: str, kind: str, value: Any) -> PendingEdit:
@@ -322,7 +412,7 @@ class SaveSession:
             {"name": name, "kind": kind, "value": value},
             f"flag {name} → ({kind}) {value}",
         )
-        self._edits.append(e)
+        self._append_edit(e)
         return e
 
     def undo(self) -> PendingEdit | None:
@@ -332,6 +422,35 @@ class SaveSession:
 
     def clear(self) -> None:
         self._edits.clear()
+
+    # ----- edit coalescing ----- #
+
+    def _append_edit(self, e: PendingEdit) -> None:
+        """Append `e` to the queue, then coalesce: drop any earlier edit that
+        targets the same field (the new one supersedes it), and if the
+        resulting edit's intended value matches the original on disk, drop
+        the edit entirely. Net effect: editing a value and then reverting it
+        leaves zero pending edits."""
+        # 1) remove prior edits with the same field-target key
+        new_key = _edit_target_key(e)
+        if new_key is not None:
+            self._edits = [
+                prior for prior in self._edits
+                if _edit_target_key(prior) != new_key
+            ]
+        # 2) drop self if no-op vs. the original .sav state
+        original_top = self._original_top()
+        if _edit_is_noop(e, original_top):
+            return
+        self._edits.append(e)
+
+    def _original_top(self) -> list[Field]:
+        """Cached parse of the original .sav bytes. Re-parsed on first call;
+        subsequent edits compare against this, not against the live edited
+        state."""
+        if self._cached_original_top is None:
+            self._cached_original_top = parse_toplevel(self._files[0].original_bytes)
+        return self._cached_original_top
 
     # ----- diff / commit ----- #
 
@@ -368,6 +487,9 @@ class SaveSession:
             snap.original_bytes = blob
             written.append(str(snap.path))
         self._edits.clear()
+        # The on-disk state has rolled forward — the previous "original" tree
+        # is stale. Next no-op check will re-parse the new baseline.
+        self._cached_original_top = None
         return written
 
     # ----- internals ----- #

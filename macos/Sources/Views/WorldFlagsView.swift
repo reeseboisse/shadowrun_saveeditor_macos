@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct WorldFlagsView: View {
     let flags: [WorldFlagView]
@@ -82,6 +83,13 @@ struct WorldFlagsView: View {
             .listStyle(.inset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // See CharacterEditorView for rationale: clicking blank background
+            // resigns first responder so the active TextField commits its
+            // current contents.
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
     }
 }
 
@@ -155,6 +163,7 @@ private struct FlagValueEditor: View {
     @EnvironmentObject var editor: EditorState
     @State private var editingText: String = ""
     @State private var initialized = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         switch flag.value {
@@ -167,31 +176,42 @@ private struct FlagValueEditor: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
+
         case .int(let v):
-            HStack {
-                TextField("", text: $editingText, onCommit: commitInt)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-                    .onAppear { if !initialized { editingText = String(v); initialized = true } }
-                    .onChange(of: v) { n in editingText = String(n) }
-            }
+            editableField(width: 110)
+                .onAppear { if !initialized { editingText = String(v); initialized = true } }
+                .onChange(of: v) { n in editingText = String(n) }
+                .onSubmit { commitInt() }
+                .onChange(of: isFocused) { focused in if !focused { commitInt() } }
+
         case .double(let v):
-            HStack {
-                TextField("", text: $editingText, onCommit: commitDouble)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-                    .onAppear { if !initialized { editingText = String(v); initialized = true } }
-                    .onChange(of: v) { n in editingText = String(n) }
-            }
+            editableField(width: 110)
+                .onAppear { if !initialized { editingText = String(v); initialized = true } }
+                .onChange(of: v) { n in editingText = String(n) }
+                .onSubmit { commitDouble() }
+                .onChange(of: isFocused) { focused in if !focused { commitDouble() } }
+
         case .string(let s):
-            HStack {
-                TextField("", text: $editingText, onCommit: commitString)
-                    .textFieldStyle(.roundedBorder)
-                    .onAppear { if !initialized { editingText = s; initialized = true } }
-                    .onChange(of: s) { n in editingText = n }
-            }
+            editableField(width: nil)
+                .onAppear { if !initialized { editingText = s; initialized = true } }
+                .onChange(of: s) { n in editingText = n }
+                .onSubmit { commitString() }
+                .onChange(of: isFocused) { focused in if !focused { commitString() } }
+
         case .empty:
             Text("—").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func editableField(width: CGFloat?) -> some View {
+        let field = TextField("", text: $editingText)
+            .textFieldStyle(.roundedBorder)
+            .focused($isFocused)
+        if let width {
+            field.frame(width: width)
+        } else {
+            field
         }
     }
 

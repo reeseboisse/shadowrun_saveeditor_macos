@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 private let attributeOrder = [
     "body", "quickness", "strength", "charisma",
@@ -58,6 +59,15 @@ struct CharacterEditorView: View {
             }
             .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
+        }
+        // Clicking blank space commits whatever field has focus by resigning
+        // first responder. Without this the macOS default is "focus stays on
+        // the text field until another control is clicked", which feels wrong
+        // when the form has lots of blank background. Buttons / fields
+        // consume the tap themselves, so this only fires on actual blank space.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            NSApp.keyWindow?.makeFirstResponder(nil)
         }
     }
 
@@ -212,42 +222,51 @@ struct IntStepperField: View {
     let onCommit: (Int) -> Void
 
     @State private var localText: String = ""
-    @State private var localValue: Int = 0
     @State private var initialized = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 6) {
-            TextField("", text: $localText, onCommit: commit)
+            TextField("", text: $localText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 90)
-            Stepper(value: $localValue, in: range, onEditingChanged: { _ in commit() }) {
-                EmptyView()
-            }
+                .focused($isFocused)
+                .onSubmit { commitText() }
+                .onChange(of: isFocused) { focused in
+                    // Commit when focus leaves the field (clicking elsewhere,
+                    // tabbing away, or pressing Esc) — not just on Return.
+                    if !focused { commitText() }
+                }
+            Stepper("", value: Binding<Int>(
+                get: { value },
+                set: { newValue in
+                    let clamped = max(range.lowerBound, min(range.upperBound, newValue))
+                    if clamped != value {
+                        onCommit(clamped)
+                    }
+                }
+            ), in: range)
             .labelsHidden()
         }
         .onAppear {
             if !initialized {
-                localValue = value
                 localText = String(value)
                 initialized = true
             }
         }
         .onChange(of: value) { newValue in
-            localValue = newValue
-            localText = String(newValue)
-        }
-        .onChange(of: localValue) { newValue in
+            // External value change (from queue dedupe, undo, or refresh)
+            // reflects back into the editing field.
             localText = String(newValue)
         }
     }
 
-    private func commit() {
-        let parsed = Int(localText) ?? localValue
+    private func commitText() {
+        let parsed = Int(localText) ?? value
         let clamped = max(range.lowerBound, min(range.upperBound, parsed))
+        localText = String(clamped)
         if clamped != value {
             onCommit(clamped)
-        } else if String(clamped) != localText {
-            localText = String(clamped)
         }
     }
 }
