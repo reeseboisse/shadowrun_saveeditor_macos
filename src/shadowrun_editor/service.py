@@ -169,12 +169,16 @@ def _edit_is_noop(e: PendingEdit, original_top: list[Field]) -> bool:
         name = a["name"]
         kind = a["kind"]
         target = a["value"]
+        # Display uses the LATEST block's value; the edit now only touches
+        # the latest block too — keep the no-op check consistent.
+        latest_kind = None
+        latest_value: Any = None
         for fl in df.iter_world_flags(original_top):
-            if fl.name != name:
-                continue
-            cur_kind, cur_value = fl.value()
-            return cur_kind == kind and cur_value == target
-        return False
+            if fl.name == name:
+                latest_kind, latest_value = fl.value()
+        if latest_kind is None:
+            return False
+        return latest_kind == kind and latest_value == target
 
     return False
 
@@ -597,8 +601,18 @@ class SaveSession:
 # --------------------------------------------------------------------------- #
 
 def _apply_set_world_flag(top: list[Field], name: str, kind: str, value: Any) -> None:
-    """Set the world flag `name` to `value` (interpreted as `kind`) in every
-    SaveStoryBlock that defines it. Does not insert flags that don't exist."""
+    """Set the world flag `name` to `value` (interpreted as `kind`).
+
+    A Dragonfall .sav has one SaveStoryBlock per autosave checkpoint and
+    each block carries its own variable_data section. The "current" game
+    state comes from the LAST block; earlier ones are historical snapshots
+    the game can roll back to. Editing every block at once rewrites
+    autosave history and at least one user-observed mission-script branch
+    appears to mis-fire when that happens.
+
+    We therefore touch only the latest block. The display layer already
+    reads the latest snapshot for the same reason (see
+    domain.dragonfall.primary_player_snapshot)."""
     import struct
     from .protobuf_engine import WIRE_LEN, WIRE_VARINT
 
@@ -624,10 +638,20 @@ def _apply_set_world_flag(top: list[Field], name: str, kind: str, value: Any) ->
         tv.children.insert(0, new_f)
         tv.mark_dirty()
 
-    for fl in df.iter_world_flags(top):
-        if fl.name != name:
-            continue
-        _encode_variant_value(fl.value_field)
+    # Find the most recent SaveStoryBlock — that's the live game state.
+    last_block: Field | None = None
+    for f in top:
+        if f.tag == 7 and f.wire == 2 and f.children is not None:
+            last_block = f
+    if last_block is None or last_block.children is None:
+        return
+
+    matches: list[Field] = []
+    for fl in df.iter_world_flags([last_block]):
+        if fl.name == name:
+            matches.append(fl.value_field)
+    for tv in matches:
+        _encode_variant_value(tv)
 
 
 # --------------------------------------------------------------------------- #
