@@ -73,10 +73,16 @@ actor PythonBridge {
 
     private var nextID: Int = 1
     private var pendingResponses: [Int: CheckedContinuation<Data, Error>] = [:]
-    private var stdoutBuffer = Data()
-    private var stdoutChunkCount = 0
-    private var stdoutLineCount = 0
     private var isAlive = true
+
+    // Stdout reader state. The readabilityHandler fires on Foundation's
+    // private threads, which can fire concurrently. All access is under
+    // `stdoutLock`; ingestStdoutChunk does the byte-level work synchronously
+    // there so chunks can never be reordered before they hit the buffer.
+    nonisolated(unsafe) private let stdoutLock = NSLock()
+    nonisolated(unsafe) private var stdoutBuffer = Data()
+    nonisolated(unsafe) private var stdoutChunkCount = 0
+    nonisolated(unsafe) private var stdoutLineCount = 0
 
     init(location: BridgeLocation) throws {
         let p = Process()
@@ -121,23 +127,33 @@ actor PythonBridge {
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
 
-        // Install readability handlers. These fire on Foundation's
-        // private background queue whenever data is available; the
-        // closures forward into the actor via async Tasks.
+        // Stdout reader. The readabilityHandler fires on Foundation's
+        // private background queue; multiple invocations can run on
+        // different threads in rapid succession. We MUST accumulate bytes
+        // in pipe order — anything else corrupts the JSON-RPC stream
+        // because a late-arriving chunk from response N can land in the
+        // middle of response N+1's bytes.
+        //
+        // Buffer access is therefore guarded by a plain NSLock and the
+        // splitting-into-lines happens inside that lock. Only complete
+        // lines are dispatched to the actor (one Task per line). Two
+        // lines can be processed by the actor in any order — that's fine
+        // because each line is a self-contained JSON-RPC response and
+        // response routing is keyed by id, not order.
         let weakSelf = WeakRef(self)
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
-                // EOF from the subprocess. Detach the handler so we
-                // don't keep firing.
                 handle.readabilityHandler = nil
                 if let ref = weakSelf.value {
                     Task { await ref.handleEOF() }
                 }
                 return
             }
-            if let ref = weakSelf.value {
-                Task { await ref.appendStdout(data) }
+            guard let ref = weakSelf.value else { return }
+            let lines = ref.ingestStdoutChunk(data)
+            for line in lines {
+                Task { await ref.handleLine(line) }
             }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -162,21 +178,31 @@ actor PythonBridge {
 
     // MARK: - Reader side
 
-    private func appendStdout(_ data: Data) {
+    /// Append a chunk of bytes to the stdout buffer and return any
+    /// newline-delimited lines it completes. Called synchronously from
+    /// Foundation's readability handler — NOT actor-isolated. Multiple
+    /// concurrent calls are serialized through stdoutLock so the on-disk
+    /// pipe order is preserved in the buffer.
+    nonisolated func ingestStdoutChunk(_ data: Data) -> [Data] {
+        stdoutLock.lock()
+        defer { stdoutLock.unlock() }
         stdoutChunkCount += 1
         NSLog("[bridge] stdout chunk #%d: %d bytes (buffer before=%d)",
               stdoutChunkCount, data.count, stdoutBuffer.count)
         stdoutBuffer.append(data)
+        var lines: [Data] = []
         while let nl = stdoutBuffer.firstIndex(of: 0x0A) {
             let line = stdoutBuffer.subdata(in: 0..<nl)
             stdoutBuffer.removeSubrange(0...nl)
-            handleLine(line)
+            stdoutLineCount += 1
+            NSLog("[bridge] stdout line #%d: %d bytes",
+                  stdoutLineCount, line.count)
+            lines.append(line)
         }
+        return lines
     }
 
     private func handleLine(_ data: Data) {
-        stdoutLineCount += 1
-        NSLog("[bridge] stdout line #%d: %d bytes", stdoutLineCount, data.count)
         guard let envelope = try? JSONDecoder().decode(ResponseEnvelope.self, from: data) else {
             NSLog("[bridge] could not parse response line (%d bytes): %@",
                   data.count,
