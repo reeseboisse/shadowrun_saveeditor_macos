@@ -42,23 +42,53 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__
-from .protobuf_engine import parse_toplevel, serialize_message
-from .savefile import detect_game_from_file
-from .service import (
-    SaveSession,
-    UnsupportedGame,
-    character_to_dict,
-    discover_diagnostics,
-    discover_save_folders,
-    edits_to_list,
-    flags_to_list,
-    scan_all_saves,
-    summary_to_dict,
-)
 
 
 _sessions: dict[int, SaveSession] = {}
 _next_handle = 1
+_runtime_loaded = False
+_unsupported_game_type: type[BaseException] | None = None
+
+
+def _load_runtime() -> None:
+    """Import parser/service modules after app-mode stdout has been sealed."""
+    global _runtime_loaded, _unsupported_game_type
+    global parse_toplevel, serialize_message, detect_game_from_file
+    global SaveSession, character_to_dict, discover_diagnostics
+    global discover_save_folders, edits_to_list, flags_to_list
+    global scan_all_saves, summary_to_dict
+
+    if _runtime_loaded:
+        return
+
+    from .protobuf_engine import parse_toplevel as _parse_toplevel
+    from .protobuf_engine import serialize_message as _serialize_message
+    from .savefile import detect_game_from_file as _detect_game_from_file
+    from .service import (
+        SaveSession as _SaveSession,
+        UnsupportedGame as _UnsupportedGame,
+        character_to_dict as _character_to_dict,
+        discover_diagnostics as _discover_diagnostics,
+        discover_save_folders as _discover_save_folders,
+        edits_to_list as _edits_to_list,
+        flags_to_list as _flags_to_list,
+        scan_all_saves as _scan_all_saves,
+        summary_to_dict as _summary_to_dict,
+    )
+
+    parse_toplevel = _parse_toplevel
+    serialize_message = _serialize_message
+    detect_game_from_file = _detect_game_from_file
+    SaveSession = _SaveSession
+    _unsupported_game_type = _UnsupportedGame
+    character_to_dict = _character_to_dict
+    discover_diagnostics = _discover_diagnostics
+    discover_save_folders = _discover_save_folders
+    edits_to_list = _edits_to_list
+    flags_to_list = _flags_to_list
+    scan_all_saves = _scan_all_saves
+    summary_to_dict = _summary_to_dict
+    _runtime_loaded = True
 
 
 def _new_handle(sess: SaveSession) -> int:
@@ -236,6 +266,36 @@ METHODS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 # Run loop                                                                    #
 # --------------------------------------------------------------------------- #
 
+def _trace_enabled() -> bool:
+    import os as _os
+    return _os.environ.get("SHADOWRUN_EDITOR_BRIDGE_TRACE") == "1"
+
+
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _claim_json_stdout() -> int:
+    """Return a private fd for JSON responses and move normal stdout to null.
+
+    Swift reads fd 1 as the JSON-RPC stream. We keep a duplicate of that pipe
+    for bridge responses, then redirect ordinary stdout so any accidental
+    print()/warning/library output cannot corrupt the protocol.
+    """
+    import os as _os
+
+    sys.stdout.flush()
+    json_fd = _os.dup(sys.stdout.fileno())
+    _os.set_inheritable(json_fd, False)
+
+    devnull = _os.open(_os.devnull, _os.O_WRONLY)
+    try:
+        _os.dup2(devnull, sys.stdout.fileno())
+    finally:
+        _os.close(devnull)
+    return json_fd
+
+
 def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     """Handle one JSON-RPC request. Returns the response dict to write back."""
     req_id = req.get("id")
@@ -247,10 +307,9 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
             "error": {"code": "unknown_method", "message": f"no such method: {method!r}"},
         }
     try:
+        _load_runtime()
         result = METHODS[method](params)
         return {"id": req_id, "result": result}
-    except UnsupportedGame as e:
-        return {"id": req_id, "error": {"code": "unsupported_game", "message": str(e)}}
     except FileNotFoundError as e:
         return {"id": req_id, "error": {"code": "not_found", "message": str(e)}}
     except KeyError as e:
@@ -258,6 +317,8 @@ def dispatch(req: dict[str, Any]) -> dict[str, Any]:
     except (ValueError, TypeError) as e:
         return {"id": req_id, "error": {"code": "bad_args", "message": str(e)}}
     except Exception as e:
+        if _unsupported_game_type is not None and isinstance(e, _unsupported_game_type):
+            return {"id": req_id, "error": {"code": "unsupported_game", "message": str(e)}}
         traceback.print_exc(file=sys.stderr)
         return {"id": req_id, "error": {"code": "internal", "message": str(e)}}
 
@@ -266,21 +327,20 @@ def serve(stdin: io.TextIOBase | None = None, stdout: io.TextIOBase | None = Non
     """Read newline-delimited JSON requests from stdin and write responses to
     stdout, one per line. Returns 0 on EOF.
 
-    Output goes through the underlying binary file descriptor with os.write,
-    so:
-      * Python's text-mode encoding / line-ending translation can't insert
-        extra newlines.
-      * Each os.write call attempts atomic write to the pipe — even if some
-        other process inherited the same fd (a multiprocessing worker, a
-        late buffer flush, anything), the JSON line stays whole or fails
-        cleanly rather than interleaving mid-byte.
+    In app mode (`stdout is None`) the response stream owns a private duplicate
+    of the original stdout pipe. The process's normal stdout is redirected to
+    /dev/null before runtime modules are imported, so accidental print output
+    can't share the JSON-RPC pipe.
     """
     import os as _os
     rin = stdin if stdin is not None else sys.stdin
     wout: io.TextIOBase | None = stdout
+    trace = _trace_enabled()
 
     if wout is None:
-        out_fd = sys.stdout.fileno()
+        out_fd = _claim_json_stdout()
+        if trace:
+            _log("[bridge.py] stdout sealed; JSON responses use private fd")
         def _emit(s: str) -> None:
             data = s.encode("utf-8")
             view = memoryview(data)
@@ -300,10 +360,20 @@ def serve(stdin: io.TextIOBase | None = None, stdout: io.TextIOBase | None = Non
         try:
             req = json.loads(line)
         except json.JSONDecodeError as e:
-            _emit(json.dumps({"id": None, "error": {"code": "bad_json", "message": str(e)}}) + "\n")
+            resp = {"id": None, "error": {"code": "bad_json", "message": str(e)}}
+            encoded = json.dumps(resp, separators=(",", ":")) + "\n"
+            _emit(encoded)
+            if trace:
+                _log(f"[bridge.py] -> id=None method=<bad_json> line_bytes={len(encoded) - 1}")
             continue
         resp = dispatch(req)
-        _emit(json.dumps(resp) + "\n")
+        encoded = json.dumps(resp, separators=(",", ":")) + "\n"
+        _emit(encoded)
+        if trace:
+            _log(
+                f"[bridge.py] -> id={resp.get('id')!r} "
+                f"method={req.get('method')!r} line_bytes={len(encoded) - 1}"
+            )
     return 0
 
 

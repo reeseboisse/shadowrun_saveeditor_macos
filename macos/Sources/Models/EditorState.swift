@@ -27,7 +27,7 @@ final class EditorState: ObservableObject {
     // Currently open save
     @Published var openSave: OpenSave?
 
-    // Monotonic counter bumped on every open() / closeCurrent(). Each in-flight
+    // Monotonic counter bumped on every open(). Each in-flight
     // bridge call captures the counter at start; if the counter has moved by
     // the time the bridge response comes back, the response is discarded —
     // a newer call has already superseded it. Prevents the race where a
@@ -206,8 +206,14 @@ final class EditorState: ObservableObject {
 
     private func apply(_ block: (PythonBridge, Int) async throws -> RefreshResponse) async {
         guard let b = bridge, let h = openSave?.handle else { return }
+        let myGen = openGeneration
         do {
             let r = try await block(b, h)
+            guard myGen == openGeneration, openSave?.handle == h else {
+                NSLog("[apply] stale refresh ignored (handle=%d, myGen=%d, current=%d)",
+                      h, myGen, openGeneration)
+                return
+            }
             openSave = OpenSave(
                 handle: h, summary: r.summary, character: r.character,
                 worldFlags: r.world_flags, pendingEdits: r.pending_edits, diff: r.diff
@@ -268,8 +274,14 @@ final class EditorState: ObservableObject {
         guard let b = bridge, let h = openSave?.handle else {
             return .failure(CommitFailure(message: "No save open"))
         }
+        let myGen = openGeneration
         do {
             let r = try await b.commit(handle: h)
+            guard myGen == openGeneration, openSave?.handle == h else {
+                NSLog("[commit] stale commit refresh ignored (handle=%d, myGen=%d, current=%d)",
+                      h, myGen, openGeneration)
+                return .success(r.written)
+            }
             openSave = OpenSave(
                 handle: h, summary: r.summary, character: r.character,
                 worldFlags: r.world_flags, pendingEdits: r.pending_edits, diff: r.diff

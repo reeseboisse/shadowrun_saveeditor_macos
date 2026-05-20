@@ -25,9 +25,6 @@ Design notes:
 
 from __future__ import annotations
 
-import concurrent.futures
-import datetime as _dt
-import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -698,31 +695,13 @@ def discover_diagnostics() -> dict[str, Any]:
     return info
 
 
-def _worker_init() -> None:
-    """ProcessPoolExecutor worker initializer.
-
-    Each worker inherits the parent process's stdout file descriptor, which
-    in our case is the JSON-RPC pipe back to Swift. ANY accidental write
-    to stdout from a worker (an unexpected print, a late-flushing buffer,
-    a stray library warning) corrupts the bridge's response stream and
-    has been confirmed to cut JSON responses in half.
-
-    Replace fd 1 with /dev/null so worker output can't reach the pipe.
-    Stderr is left alone — diagnostics still surface via NSLog in the GUI.
-    """
-    import os, sys
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(devnull, 1)
-    os.close(devnull)
-    # Detach Python's stdout buffer too so any cached writes are dropped.
-    sys.stdout.flush()
-
-
 def _summarize_one(slot: SaveSlot) -> SaveSummary | None:
-    """Pure function (picklable) for ProcessPoolExecutor workers."""
+    """Summarize one slot, dropping unreadable saves from the picker."""
     try:
         return SaveSession(slot).summary()
-    except Exception:
+    except Exception as e:
+        import sys as _sys
+        print(f"[bridge] skipping unreadable save {slot.sav_path}: {e}", file=_sys.stderr)
         return None
 
 

@@ -74,6 +74,8 @@ actor PythonBridge {
     private var nextID: Int = 1
     private var pendingResponses: [Int: CheckedContinuation<Data, Error>] = [:]
     private var stdoutBuffer = Data()
+    private var stdoutChunkCount = 0
+    private var stdoutLineCount = 0
     private var isAlive = true
 
     init(location: BridgeLocation) throws {
@@ -83,6 +85,9 @@ actor PythonBridge {
 
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        if env["SHADOWRUN_EDITOR_BRIDGE_TRACE"] == nil {
+            env["SHADOWRUN_EDITOR_BRIDGE_TRACE"] = "1"
+        }
         if let src = location.sourceRoot {
             let existing = env["PYTHONPATH"] ?? ""
             env["PYTHONPATH"] = existing.isEmpty ? src.path : "\(src.path):\(existing)"
@@ -158,6 +163,9 @@ actor PythonBridge {
     // MARK: - Reader side
 
     private func appendStdout(_ data: Data) {
+        stdoutChunkCount += 1
+        NSLog("[bridge] stdout chunk #%d: %d bytes (buffer before=%d)",
+              stdoutChunkCount, data.count, stdoutBuffer.count)
         stdoutBuffer.append(data)
         while let nl = stdoutBuffer.firstIndex(of: 0x0A) {
             let line = stdoutBuffer.subdata(in: 0..<nl)
@@ -167,9 +175,13 @@ actor PythonBridge {
     }
 
     private func handleLine(_ data: Data) {
+        stdoutLineCount += 1
+        NSLog("[bridge] stdout line #%d: %d bytes", stdoutLineCount, data.count)
         guard let envelope = try? JSONDecoder().decode(ResponseEnvelope.self, from: data) else {
-            NSLog("[bridge] could not parse response line: %@",
+            NSLog("[bridge] could not parse response line (%d bytes): %@",
+                  data.count,
                   String(data: data, encoding: .utf8) ?? "<binary>")
+            failAllPending(BridgeError.decodeFailed("Malformed JSON-RPC response line (\(data.count) bytes)"))
             return
         }
         guard let id = envelope.id, let continuation = pendingResponses.removeValue(forKey: id) else {
@@ -185,15 +197,19 @@ actor PythonBridge {
         }
     }
 
+    private func failAllPending(_ error: Error) {
+        let pending = pendingResponses
+        pendingResponses.removeAll()
+        for (_, c) in pending {
+            c.resume(throwing: error)
+        }
+    }
+
     private func handleEOF() {
         isAlive = false
         NSLog("[bridge] EOF on stdout. Failing %d pending request(s).",
               pendingResponses.count)
-        let pending = pendingResponses
-        pendingResponses.removeAll()
-        for (_, c) in pending {
-            c.resume(throwing: BridgeError.crashed(process.terminationStatus))
-        }
+        failAllPending(BridgeError.crashed(process.terminationStatus))
     }
 
     private struct ResponseEnvelope: Decodable {

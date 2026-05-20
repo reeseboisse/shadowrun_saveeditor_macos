@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,8 +35,10 @@ def _call(method: str, **params):
 @pytest.fixture(autouse=True)
 def _clean_session_state():
     bridge._sessions.clear()
+    bridge._next_handle = 1
     yield
     bridge._sessions.clear()
+    bridge._next_handle = 1
 
 
 def test_ping():
@@ -130,6 +135,44 @@ def test_serve_processes_newline_delimited_json(tmp_path: Path):
     r2 = json.loads(lines[1])
     assert r1["result"]["ok"] is True
     assert r2["result"]["summary"]["game"] == "dragonfall"
+
+
+def test_bridge_subprocess_stdout_is_json_only(tmp_path: Path):
+    """Smoke-test the real stdio bridge, not just in-process dispatch()."""
+    dst = tmp_path / "slot"
+    shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    sav = next(p for p in dst.iterdir() if p.suffix == ".sav")
+
+    env = os.environ.copy()
+    src = str(REPO_ROOT / "src")
+    env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["SHADOWRUN_EDITOR_BRIDGE_TRACE"] = "1"
+
+    requests = [
+        {"id": 1, "method": "ping", "params": {}},
+        {"id": 2, "method": "open_save", "params": {"path": str(sav)}},
+    ]
+    payload = "\n".join(json.dumps(r) for r in requests) + "\n"
+    proc = subprocess.run(
+        [sys.executable, "-u", "-m", "shadowrun_editor.bridge"],
+        cwd=REPO_ROOT,
+        input=payload.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        timeout=30,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    lines = [l for l in proc.stdout.splitlines() if l.strip()]
+    assert len(lines) == 2
+    decoded = [json.loads(line) for line in lines]
+    assert decoded[0]["result"]["ok"] is True
+    assert decoded[1]["result"]["summary"]["game"] == "dragonfall"
+    stderr = proc.stderr.decode("utf-8", errors="replace")
+    assert "stdout sealed" in stderr
+    assert "method='open_save' line_bytes=" in stderr
 
 
 def test_verify(tmp_path: Path):
