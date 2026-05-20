@@ -588,8 +588,16 @@ def donate_to_alice_fund(top: list[Field], amount: int) -> EditReport:
 
     _set_or_insert_varint(block, 9, new_nuyen)
 
+    # The TsVariant for a script-declared variable carries both the
+    # discriminated value (tag 1=int / 2=bool / 3=float / 4=string) AND a
+    # variableref_value (tag 6) sub-message that links the value back to
+    # its declared name and type. The script engine reads BOTH at runtime;
+    # destroying the variableref orphans the value and downstream dialog
+    # branches that depend on the variable resolve to an unhandled state.
+    # Replace ONLY the value-variant field (tag 1 here), preserving every
+    # other child of the variant.
     assert fund_variant.children is not None
-    fund_variant.children[:] = [c for c in fund_variant.children if c.tag not in {1, 2, 3, 4, 5, 6}]
+    fund_variant.children[:] = [c for c in fund_variant.children if c.tag != 1]
     new_int = Field(tag=1, wire=WIRE_VARINT, value=new_fund, dirty=True)
     fund_variant.children.insert(0, new_int)
     fund_variant.mark_dirty()

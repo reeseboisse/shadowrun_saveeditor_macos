@@ -640,11 +640,21 @@ def _apply_set_world_flag(top: list[Field], name: str, kind: str, value: Any) ->
     target_tag = type_tag_for_kind[kind]
 
     def _encode_variant_value(tv: Field) -> None:
-        """Mutate `tv` (a TsVariant Field) to hold the new (kind, value)."""
+        """Mutate `tv` (a TsVariant Field) to hold the new (kind, value).
+
+        The TsVariant for a script-declared variable carries both the
+        value-discriminator field (tag 1=int / 2=bool / 3=float / 4=string)
+        AND a variableref_value (tag 6) sub-message that records the
+        variable's declared name and type. The script engine reads BOTH at
+        runtime — destroying the variableref orphans the value and breaks
+        any dialog branch that resolves the variable by name. Replace ONLY
+        the value-discriminator tags (1-4), and only the OLD discriminator
+        if it differs from the new one, so the variableref and any other
+        annotations the runtime tracks survive the edit.
+        """
         assert tv.children is not None
-        # Drop any existing concrete-value field (tags 1..6); we always set
-        # exactly one. Keep order stable otherwise.
-        tv.children[:] = [c for c in tv.children if c.tag not in {1, 2, 3, 4, 5, 6}]
+        value_tags = {1, 2, 3, 4}
+        tv.children[:] = [c for c in tv.children if c.tag not in value_tags]
         if kind == "int":
             new_f = Field(tag=1, wire=WIRE_VARINT, value=int(value), dirty=True)
         elif kind == "bool":

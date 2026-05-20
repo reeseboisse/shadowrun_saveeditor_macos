@@ -204,3 +204,52 @@ def test_donate_to_alice_fund_does_not_touch_earlier_blocks():
 
     assert before[:-1] == after[:-1], "earlier blocks were modified"
     assert after[-1] == (before[-1] or 0) + 500, "latest block didn't change"
+
+
+def test_donate_to_alice_fund_preserves_variableref_metadata():
+    """The TsVariant for a script-declared variable carries a tag-6
+    variableref sub-message describing the variable's name and type.
+    Earlier versions of the donate / world-flag edit stripped tag 6
+    along with the discriminator tags, orphaning the value from its
+    declared name. The game's dialog scripts can't bind the orphaned
+    value back to the variable, breaking the mission-computer "Check
+    the status of the Alice fund" branch. Verify the variableref
+    survives a donate cycle."""
+    from shadowrun_editor.protobuf_engine import WIRE_LEN, WIRE_VARINT
+    data = DF_SAV.read_bytes()
+    top = parse_toplevel(data)
+    df.donate_to_alice_fund(top, 100)
+    out = serialize_message(top)
+    top2 = parse_toplevel(out)
+
+    # Find Global_AliceFunds TsVariant
+    last = df._latest_story_block(top2)
+    assert last is not None
+    variant = None
+    for sec in last.children or []:
+        if sec.tag != 5 or sec.children is None:
+            continue
+        for pair in sec.children:
+            if pair.tag != 3 or pair.children is None:
+                continue
+            name_f = next((x for x in pair.children if x.tag == 1 and x.wire == WIRE_LEN), None)
+            val_f = next((x for x in pair.children if x.tag == 2 and x.wire == WIRE_LEN), None)
+            if name_f is not None and val_f is not None and name_f.value == b"Global_AliceFunds":
+                variant = val_f
+                break
+        if variant:
+            break
+    assert variant is not None and variant.children is not None
+
+    # int_value at tag 1 — the new value
+    int_f = next((c for c in variant.children if c.tag == 1 and c.wire == WIRE_VARINT), None)
+    assert int_f is not None
+
+    # variableref at tag 6 — must still be there with name + type
+    vref = next((c for c in variant.children if c.tag == 6 and c.wire == WIRE_LEN), None)
+    assert vref is not None, "variableref (tag 6) was stripped by the edit"
+    assert vref.children is not None
+    name_in_ref = next((c for c in vref.children if c.tag == 3 and c.wire == WIRE_LEN), None)
+    type_in_ref = next((c for c in vref.children if c.tag == 5 and c.wire == WIRE_LEN), None)
+    assert name_in_ref is not None and name_in_ref.value == b"Global_AliceFunds"
+    assert type_in_ref is not None and type_in_ref.value == b"int"
