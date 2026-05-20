@@ -91,6 +91,7 @@ class CharacterView:
     karma: int | None
     unspent_karma: int | None
     nuyen: int | None
+    alice_fund: int | None              # Dragonfall-only; None if flag absent
     attributes: dict[str, int]
     skills: dict[str, int]
     etiquettes: dict[str, int]
@@ -434,6 +435,20 @@ class SaveSession:
         self._append_edit(e)
         return e
 
+    def queue_donate_to_alice_fund(self, amount: int) -> PendingEdit:
+        """Move `amount` nuyen from the player's wallet into
+        Global_AliceFunds. Dragonfall-only — see
+        domain.dragonfall.donate_to_alice_fund for why the two fields must
+        change together."""
+        self._require_supported()
+        e = PendingEdit(
+            "donate_to_alice_fund",
+            {"amount": int(amount)},
+            f"Donate {amount} ¥ to Alice Fund",
+        )
+        self._append_edit(e)
+        return e
+
     def undo(self) -> PendingEdit | None:
         if not self._edits:
             return None
@@ -531,6 +546,7 @@ class SaveSession:
             karma=sheet.karma,
             unspent_karma=sheet.unspent_karma,
             nuyen=df.read_nuyen(sav_top),
+            alice_fund=df.read_alice_fund(sav_top),
             attributes=dict(sheet.attributes),
             skills=dict(sheet.skills),
             etiquettes=dict(sheet.etiquettes),
@@ -572,6 +588,8 @@ class SaveSession:
             df.set_nuyen(top, a["value"])
         elif e.op == "set_world_flag":
             _apply_set_world_flag(top, a["name"], a["kind"], a["value"])
+        elif e.op == "donate_to_alice_fund":
+            df.donate_to_alice_fund(top, a["amount"])
         else:
             raise ValueError(f"unknown op: {e.op}")
 

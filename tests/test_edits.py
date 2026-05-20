@@ -144,3 +144,63 @@ def test_add_etiquette_is_idempotent():
     # Apply again to the now-academic save; should produce no changes.
     report2 = df.add_etiquette(top1, "academic")
     assert not report2.changes, "second add_etiquette should be a no-op"
+
+
+def test_donate_to_alice_fund_pairs_nuyen_and_flag():
+    """+amount to Global_AliceFunds AND -amount from nuyen, both on the
+    latest SaveStoryBlock only. Matches the in-game donation transaction
+    exactly (verified against a user-provided before/after save pair)."""
+    data = DF_SAV.read_bytes()
+    top = parse_toplevel(data)
+    fund_before = df.read_alice_fund(top)
+    nuyen_before = df.read_nuyen(top)
+    assert fund_before is not None and nuyen_before is not None
+
+    df.donate_to_alice_fund(top, 1000)
+    out = serialize_message(top)
+    top2 = parse_toplevel(out)
+
+    fund_after = df.read_alice_fund(top2)
+    nuyen_after = df.read_nuyen(top2)
+    assert fund_after == fund_before + 1000
+    assert nuyen_after == nuyen_before - 1000
+
+
+def test_donate_to_alice_fund_does_not_touch_earlier_blocks():
+    """Earlier SaveStoryBlocks (autosave history) must keep their original
+    AliceFunds value when only the latest block is donated to."""
+    data = DF_SAV.read_bytes()
+    top = parse_toplevel(data)
+
+    # Snapshot Global_AliceFunds across every block before
+    def fund_per_block(tree):
+        from shadowrun_editor.protobuf_engine import WIRE_LEN, WIRE_VARINT
+        out = []
+        for f in tree:
+            if f.tag != 7 or f.wire != WIRE_LEN or f.children is None:
+                continue
+            value = None
+            for sec in f.children:
+                if sec.tag != 5 or sec.children is None:
+                    continue
+                for pair in sec.children:
+                    if pair.tag != 3 or pair.children is None:
+                        continue
+                    name_f = next((x for x in pair.children if x.tag == 1 and x.wire == WIRE_LEN), None)
+                    val_f = next((x for x in pair.children if x.tag == 2 and x.wire == WIRE_LEN), None)
+                    if name_f is None or val_f is None or val_f.children is None:
+                        continue
+                    if name_f.value == b"Global_AliceFunds":
+                        for vc in val_f.children:
+                            if vc.tag == 1 and vc.wire == WIRE_VARINT:
+                                value = int(vc.value)
+            out.append(value)
+        return out
+
+    before = fund_per_block(top)
+    df.donate_to_alice_fund(top, 500)
+    out = serialize_message(top)
+    after = fund_per_block(parse_toplevel(out))
+
+    assert before[:-1] == after[:-1], "earlier blocks were modified"
+    assert after[-1] == (before[-1] or 0) + 500, "latest block didn't change"

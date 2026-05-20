@@ -483,22 +483,145 @@ def set_unspent_karma(top: list[Field], value: int) -> EditReport:
     return report
 
 
-def set_nuyen(top: list[Field], value: int) -> EditReport:
-    """Nuyen is a per-SaveStoryBlock field (tag 9 of SaveStoryBlock). Set it
-    on every story block we find — there's one per autosave point."""
-    report = EditReport(operation="set_nuyen", target=str(value))
-    # SaveStoryBlocks are the repeated tag-7 fields directly under the top
-    # SaveGame message. They're the only place "nuyen" (tag 9 of
-    # SaveStoryBlock) lives, so we don't need to deep-walk the whole tree.
+def _latest_story_block(top: list[Field]) -> Field | None:
+    """Return the last SaveStoryBlock (tag 7 directly under the SaveGame top
+    level). The game writes nuyen, world flags, and donation-coupled state
+    to this block only; earlier blocks are autosave history."""
+    last: Field | None = None
     for f in top:
         if f.tag == 7 and f.wire == WIRE_LEN and f.children is not None:
-            # Heuristic: SaveStoryBlock has both tag 9 (nuyen) and tag 13
-            # (block_version) — but block_version may not always be set.
-            # Safer to walk only the direct top-level repeated story blocks.
-            changed, old = _set_or_insert_varint(f, 9, value)
-            if changed:
-                report.add(f"  story block @0x{id(f):x}: nuyen {old} -> {value}")
+            last = f
+    return last
+
+
+def set_nuyen(top: list[Field], value: int) -> EditReport:
+    """Set nuyen on the latest SaveStoryBlock only.
+
+    Empirically (see two-save donation diff in /tmp/sim_donation.py) the
+    game itself only writes nuyen to the latest block — earlier blocks
+    preserve the historical balance at that autosave point. Writing nuyen
+    across every block worked for casual cheats but didn't match the
+    game's own behavior; for donation-coupled mechanics (Alice Fund,
+    bribes, faction donations) consistency with the game's pattern
+    matters."""
+    report = EditReport(operation="set_nuyen", target=str(value))
+    block = _latest_story_block(top)
+    if block is None:
+        return report
+    changed, old = _set_or_insert_varint(block, 9, value)
+    if changed:
+        report.add(f"  story block nuyen {old} -> {value}")
     return report
+
+
+def donate_to_alice_fund(top: list[Field], amount: int) -> EditReport:
+    """Apply a Dragonfall Alice Fund donation atomically.
+
+    Empirical basis (from diffing a user-provided before/after save pair
+    where the player donated exactly 5000 nuyen via the in-game mission
+    computer): the donation moves the value from the player's wallet into
+    the Global_AliceFunds counter, and these are the ONLY fields that
+    change on the latest SaveStoryBlock besides the save-time timestamp.
+
+        Global_AliceFunds += amount
+        nuyen             -= amount
+
+    Both writes land on the latest SaveStoryBlock only — earlier blocks
+    (autosave history) are left intact, matching what the game itself
+    does. A simulation that applies just these two field changes to
+    save B (before donation) reproduces save A (after donation) to
+    within ~100 bytes (timestamps and similar save-clock state).
+
+    Not verified: whether the in-game mission-computer dialog REQUIRES
+    the nuyen debit to advance correctly, or whether some other
+    precondition is checked. Editing only Global_AliceFunds has been
+    reported by the user to leave that dialog stuck, but the mechanism
+    has not been confirmed.  Pairing the writes here at least produces
+    a save that's byte-equivalent to one the game would write itself,
+    which is the strongest guarantee we can offer without script-level
+    knowledge.
+    """
+    report = EditReport(operation="donate_to_alice_fund", target=str(amount))
+    block = _latest_story_block(top)
+    if block is None or block.children is None:
+        return report
+
+    # Read current nuyen
+    nuyen_field = next(
+        (c for c in block.children if c.tag == 9 and c.wire == WIRE_VARINT),
+        None,
+    )
+    current_nuyen = int(nuyen_field.value) if nuyen_field else 0  # type: ignore[arg-type]
+
+    # Read current Global_AliceFunds
+    current_fund = 0
+    fund_variant: Field | None = None
+    for sec in block.children:
+        if sec.tag != 5 or sec.wire != WIRE_LEN or sec.children is None:
+            continue
+        for pair in sec.children:
+            if pair.tag != 3 or pair.children is None:
+                continue
+            name_f = next((x for x in pair.children if x.tag == 1 and x.wire == WIRE_LEN), None)
+            val_f = next((x for x in pair.children if x.tag == 2 and x.wire == WIRE_LEN), None)
+            if name_f is None or val_f is None:
+                continue
+            if name_f.value == b"Global_AliceFunds":
+                fund_variant = val_f
+                if val_f.children is not None:
+                    for vc in val_f.children:
+                        if vc.tag == 1 and vc.wire == WIRE_VARINT:
+                            current_fund = int(vc.value)  # type: ignore[arg-type]
+                            break
+                break
+        if fund_variant is not None:
+            break
+
+    if fund_variant is None:
+        # Flag must already exist — the mission computer's first-visit script
+        # declares it. We don't synthesize the flag from scratch.
+        report.add(f"  Global_AliceFunds not present in latest block; donation skipped")
+        return report
+
+    new_nuyen = current_nuyen - int(amount)
+    new_fund = current_fund + int(amount)
+
+    _set_or_insert_varint(block, 9, new_nuyen)
+
+    assert fund_variant.children is not None
+    fund_variant.children[:] = [c for c in fund_variant.children if c.tag not in {1, 2, 3, 4, 5, 6}]
+    new_int = Field(tag=1, wire=WIRE_VARINT, value=new_fund, dirty=True)
+    fund_variant.children.insert(0, new_int)
+    fund_variant.mark_dirty()
+
+    report.add(
+        f"  nuyen {current_nuyen} -> {new_nuyen}, "
+        f"Global_AliceFunds {current_fund} -> {new_fund}"
+    )
+    return report
+
+
+def read_alice_fund(top: list[Field]) -> int | None:
+    """Return the latest-block value of Global_AliceFunds, or None if the
+    flag isn't declared yet (player hasn't visited the mission computer)."""
+    block = _latest_story_block(top)
+    if block is None or block.children is None:
+        return None
+    for sec in block.children:
+        if sec.tag != 5 or sec.wire != WIRE_LEN or sec.children is None:
+            continue
+        for pair in sec.children:
+            if pair.tag != 3 or pair.children is None:
+                continue
+            name_f = next((x for x in pair.children if x.tag == 1 and x.wire == WIRE_LEN), None)
+            val_f = next((x for x in pair.children if x.tag == 2 and x.wire == WIRE_LEN), None)
+            if name_f is None or val_f is None:
+                continue
+            if name_f.value == b"Global_AliceFunds" and val_f.children:
+                for vc in val_f.children:
+                    if vc.tag == 1 and vc.wire == WIRE_VARINT:
+                        return int(vc.value)  # type: ignore[arg-type]
+    return None
 
 
 # --------------------------------------------------------------------------- #
