@@ -156,34 +156,50 @@ final class EditorState: ObservableObject {
     // MARK: - Opening / closing a save
 
     func open(summary: SaveSummary) async {
-        guard let b = bridge else { return }
+        guard let b = bridge else {
+            NSLog("[open] no bridge, aborting")
+            return
+        }
         openGeneration += 1
         let myGen = openGeneration
+        NSLog("[open] start uuid=%@ myGen=%d", summary.uuid, myGen)
+
         // Close any previously-open save first (and capture its handle so we
         // don't leak handles in the bridge if the user clicks rapidly).
         await closeCurrent()
-        if myGen != openGeneration { return }   // superseded by a newer click
+        if myGen != openGeneration {
+            NSLog("[open] superseded after closeCurrent (myGen=%d, current=%d)",
+                  myGen, openGeneration)
+            return
+        }
+
         do {
+            NSLog("[open] sending openSave RPC for %@", summary.uuid)
             let r = try await b.openSave(path: summary.sav_path)
             // If another open() ran while we were awaiting, drop our response.
             guard myGen == openGeneration else {
-                // Hand the now-orphaned handle back to the bridge so it can free it.
+                NSLog("[open] response superseded (myGen=%d, current=%d), closing handle %d",
+                      myGen, openGeneration, r.handle)
                 try? await b.close(handle: r.handle)
                 return
             }
+            NSLog("[open] applying response, handle=%d", r.handle)
             openSave = OpenSave(
                 handle: r.handle, summary: r.summary, character: r.character,
                 worldFlags: r.world_flags, pendingEdits: r.pending_edits, diff: r.diff
             )
         } catch {
+            NSLog("[open] failed: %@", error.localizedDescription)
             lastError = error.localizedDescription
         }
     }
 
     func closeCurrent() async {
         guard let b = bridge, let handle = openSave?.handle else { return }
+        NSLog("[closeCurrent] closing handle=%d", handle)
         try? await b.close(handle: handle)
         openSave = nil
+        NSLog("[closeCurrent] done")
     }
 
     // MARK: - Edit operations (all queue, none commit)
