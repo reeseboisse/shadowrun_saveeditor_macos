@@ -303,27 +303,59 @@ class SaveSession:
         sav_top = parse_toplevel(self._files[0].original_bytes)
         # display_name and scene_name live on the SaveGame top-level
         display = None
-        time_utc: int | None = None
-        # SaveGame schema: tag 2 display_name, tag 3 time_utc — for Returns/HK
-        # these may shift, but tag 2 being a string near the start is consistent.
+        # SaveGame schema: tag 2 display_name, tag 3 time_utc. Tag 2 being a
+        # string near the start is consistent across all three games.
         for f in sav_top[:8]:
             if f.tag == 2 and f.wire == 2:
                 try:
                     display = f.value.decode("utf-8")  # type: ignore[union-attr]
                 except UnicodeDecodeError:
                     pass
-            elif f.tag == 3 and f.wire == 0:
-                time_utc = int(f.value)  # type: ignore[arg-type]
         char_name = df.first_player_char_name(sav_top) if self.supported else None
-        # Scene name from the .srt filename (since .sav doesn't have one),
-        # if there's exactly one .srt — saves usually pin a "last scene".
+
+        # The "current" save time and scene live on the LATEST SaveStoryBlock
+        # (tag 7 at top-level). Each block is one autosave checkpoint and
+        # carries its own:
+        #   tag 1  — human-readable scene/zone name ("THE KREUZBASAR",
+        #            "MERCY MENTAL HOSPITAL", "TAI PO"). This is what the
+        #            game's own slot picker displays.
+        #   tag 4  — engine scene id ("Haven", "a3_Haven", "c12-s1_MercyMental").
+        #            Useful as a fallback if tag 1 is absent.
+        #   tag 30 — .NET DateTime.Ticks for this checkpoint.
+        # The top-level tag 3 timestamp is roughly the slot's most recent
+        # write too, but it can drift relative to the actual latest block
+        # in some autosave cadences; the per-block value is the source of
+        # truth the game UI uses.
+        time_utc: int | None = None
         scene_name: str | None = None
-        if len(self.slot.srt_paths) >= 1:
-            # filename is <uuid>-<SceneName>-<sceneUuid>.srt
-            stem = self.slot.srt_paths[-1].stem
-            parts = stem.split("-")
-            if len(parts) >= 3:
-                scene_name = "-".join(parts[1:-1])
+        latest_block: Field | None = None
+        for f in sav_top:
+            if f.tag == 7 and f.wire == 2 and f.children is not None:
+                latest_block = f
+        if latest_block is not None and latest_block.children is not None:
+            for c in latest_block.children:
+                if c.tag == 1 and c.wire == 2 and isinstance(c.value, (bytes, bytearray)):
+                    try:
+                        scene_name = c.value.decode("utf-8")
+                    except UnicodeDecodeError:
+                        pass
+                elif c.tag == 4 and c.wire == 2 and scene_name is None \
+                        and isinstance(c.value, (bytes, bytearray)):
+                    try:
+                        scene_name = c.value.decode("utf-8")
+                    except UnicodeDecodeError:
+                        pass
+                elif c.tag == 30 and c.wire == 0:
+                    time_utc = int(c.value)  # type: ignore[arg-type]
+
+        # Fall back to the top-level tag 3 timestamp if the latest block
+        # didn't carry one (defensive — every block we've seen has tag 30).
+        if time_utc is None:
+            for f in sav_top[:8]:
+                if f.tag == 3 and f.wire == 0:
+                    time_utc = int(f.value)  # type: ignore[arg-type]
+                    break
+
         return SaveSummary(
             uuid=self.slot.uuid,
             folder=str(self.slot.folder),
