@@ -113,7 +113,16 @@ def scan_folder(folder: str | Path, *, recursive: bool = True, max_depth: int = 
         for p in sorted(root.iterdir()):
             _ingest(p)
     else:
-        # Bounded-depth walk: skip hidden dirs and obvious noise.
+        # Bounded-depth walk: skip hidden dirs and the game's own backup
+        # snapshot folders. The Dragonfall installer (and at least one HK
+        # build) keeps a parallel Save Games tree under BACKUP/Saves/ that
+        # holds older copies of the same UUIDs. Since slots are deduped by
+        # UUID, a backup copy can otherwise win the race and shadow the
+        # live save — the user picker would then show e.g. a stale
+        # 2026-05-13 copy of a save the game itself last wrote 2026-05-24.
+        # These folders are the game's mechanism, not anything the editor
+        # should touch.
+        skip_dir_names = {"backup", "backups"}
         root_depth = len(root.parts)
         for dirpath, dirnames, filenames in os.walk(root):
             depth = len(Path(dirpath).parts) - root_depth
@@ -121,7 +130,10 @@ def scan_folder(folder: str | Path, *, recursive: bool = True, max_depth: int = 
                 dirnames[:] = []
                 continue
             # In-place prune of dirs we won't descend
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".") and d.lower() not in skip_dir_names
+            ]
             for fn in filenames:
                 _ingest(Path(dirpath) / fn)
 
