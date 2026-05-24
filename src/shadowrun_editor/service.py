@@ -356,6 +356,19 @@ class SaveSession:
                     time_utc = int(f.value)  # type: ignore[arg-type]
                     break
 
+        # The stored value is .NET DateTime.Ticks of DateTime.Now (Kind=Local),
+        # not DateTime.UtcNow. The Kind bit isn't serialized when the game
+        # stores it as a bare long, but the game's own slot picker reads it
+        # back as local clock time and renders it directly, so its display is
+        # internally consistent. If we treat the same value as UTC ticks and
+        # then format in the user's local timezone we end up showing a time
+        # shifted by the local UTC offset (4h in EDT, etc.). Re-interpret the
+        # ticks as local clock time and produce a true Unix UTC instant so
+        # downstream consumers (Swift saveDate, CLI ISO formatting) display
+        # the same wall-clock time the game does.
+        if time_utc is not None:
+            time_utc = _ticks_local_to_unix_ticks(time_utc)
+
         return SaveSummary(
             uuid=self.slot.uuid,
             folder=str(self.slot.folder),
@@ -701,6 +714,29 @@ class SaveSession:
 # --------------------------------------------------------------------------- #
 # World-flag edit helper                                                      #
 # --------------------------------------------------------------------------- #
+
+def _ticks_local_to_unix_ticks(local_ticks: int) -> int:
+    """Convert a .NET DateTime.Ticks value that was written from local clock
+    time (DateTime.Now.Ticks, not DateTime.UtcNow.Ticks) into a tick count
+    that represents the same wall-clock instant in UTC. The output is still
+    in the .NET ticks domain (100-ns intervals since 0001-01-01 UTC) so the
+    rest of the pipeline — which assumes UTC ticks — doesn't need to change.
+
+    Empirical check on the user's Dragonfall save folder in EDT: game UI
+    shows 11:36:58 for an autosave, the raw ticks decode to 07:36:58 UTC,
+    and after this conversion they re-encode to 11:36:58 UTC ticks (which
+    the Swift `saveDate` then formats as 11:36:58 in EDT — matching the
+    game's picker)."""
+    from datetime import datetime, timezone
+    _UNIX_TICKS = 621355968000000000
+    naive_unix_seconds = (local_ticks - _UNIX_TICKS) / 1e7
+    # Treat as a naive local datetime, convert to a true UTC instant.
+    naive_local = datetime.fromtimestamp(naive_unix_seconds, tz=timezone.utc).replace(tzinfo=None)
+    local_tz = datetime.now().astimezone().tzinfo
+    aware_local = naive_local.replace(tzinfo=local_tz)
+    true_utc_seconds = aware_local.astimezone(timezone.utc).timestamp()
+    return int(true_utc_seconds * 1e7) + _UNIX_TICKS
+
 
 def _apply_set_world_flag(top: list[Field], name: str, kind: str, value: Any) -> None:
     """Set the world flag `name` to `value` (interpreted as `kind`).
