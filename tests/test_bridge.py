@@ -104,6 +104,32 @@ def test_queue_edits_diff_commit_round_trip(tmp_path: Path):
     assert "academic" in again["character"]["etiquettes"]
 
 
+def test_inventory_methods_round_trip(tmp_path: Path):
+    dst = tmp_path / "slot"
+    shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    sav = next(p for p in dst.iterdir() if p.suffix == ".sav")
+    h = _call("open_save", path=str(sav))["handle"]
+
+    opened = _call("refresh", handle=h)
+    assert opened["character"]["inventory"], "inventory should be populated"
+    # Each item dict carries the catalog presentation fields the UI needs.
+    first = opened["character"]["inventory"][0]
+    assert {"prefab", "display_name", "category", "subtype", "quantity"} <= set(first)
+
+    r = _call("set_item_quantity", handle=h, prefab="HealthPack_med", quantity=15)
+    assert any(e["op"] == "set_item_quantity" for e in r["pending_edits"])
+    _call("add_item", handle=h, prefab="Grenade 2 (Frag)", count=3)
+
+    committed = _call("commit", handle=h)
+    assert committed["written"]
+
+    h2 = _call("open_save", path=str(sav))["handle"]
+    inv = {it["prefab"]: it["quantity"]
+           for it in _call("refresh", handle=h2)["character"]["inventory"]}
+    assert inv["HealthPack_med"] == 15
+    assert inv["Grenade 2 (Frag)"] == 3
+
+
 def test_undo(tmp_path: Path):
     dst = tmp_path / "slot"
     shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))

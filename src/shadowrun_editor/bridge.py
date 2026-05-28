@@ -185,6 +185,24 @@ def m_set_skill(p: dict[str, Any]) -> dict[str, Any]:
     return _refresh_payload(sess)
 
 
+def m_set_item_quantity(p: dict[str, Any]) -> dict[str, Any]:
+    sess = _require(int(p["handle"]))
+    sess.queue_set_item_quantity(p["prefab"], int(p["quantity"]))
+    return _refresh_payload(sess)
+
+
+def m_add_item(p: dict[str, Any]) -> dict[str, Any]:
+    sess = _require(int(p["handle"]))
+    sess.queue_add_item(p["prefab"], int(p.get("count", 1)))
+    return _refresh_payload(sess)
+
+
+def m_remove_item(p: dict[str, Any]) -> dict[str, Any]:
+    sess = _require(int(p["handle"]))
+    sess.queue_remove_item(p["prefab"])
+    return _refresh_payload(sess)
+
+
 def m_set_karma(p: dict[str, Any]) -> dict[str, Any]:
     sess = _require(int(p["handle"]))
     sess.queue_set_karma(int(p["value"]))
@@ -251,6 +269,9 @@ METHODS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "remove_etiquette": m_remove_etiquette,
     "set_attribute": m_set_attribute,
     "set_skill": m_set_skill,
+    "set_item_quantity": m_set_item_quantity,
+    "add_item": m_add_item,
+    "remove_item": m_remove_item,
     "set_karma": m_set_karma,
     "set_nuyen": m_set_nuyen,
     "set_world_flag": m_set_world_flag,

@@ -100,6 +100,17 @@ class WorldFlagView:
 
 
 @dataclass
+class InventoryItemView:
+    """One stack in the inventory editor. `prefab` is the engine storage key
+    (what edits target); the rest is presentation from the heuristic catalog."""
+    prefab: str
+    display_name: str
+    category: str
+    subtype: str | None
+    quantity: int
+
+
+@dataclass
 class CharacterView:
     """Everything the character editor displays for the current snapshot."""
     name: str | None
@@ -113,6 +124,7 @@ class CharacterView:
     attributes: dict[str, int]
     skills: dict[str, int]
     etiquettes: dict[str, int]          # currently-active etiquettes (with ratings)
+    inventory: list[InventoryItemView]  # current items on the displayed snapshot
     # Game-specific UI surfaces. The engine knows the canonical full
     # inventory of attributes/skills/etiquettes (so any save round-trips
     # cleanly), but the editor only exposes the subsets actually used by
@@ -139,6 +151,8 @@ def _edit_target_key(e: PendingEdit) -> tuple | None:
         return ("attribute", a["attr"])
     if e.op == "set_skill":
         return ("skill", a["skill"])
+    if e.op == "set_item_quantity":
+        return ("item_quantity", a["prefab"])
     if e.op == "set_unspent_karma":
         return ("unspent_karma",)
     if e.op == "set_nuyen":
@@ -170,6 +184,15 @@ def _edit_is_noop(e: PendingEdit, original_top: list[Field]) -> bool:
         if tag is None or primary is None:
             return False
         return _varint_in(primary.skills, tag) == int(a["value"])
+
+    if e.op == "set_item_quantity":
+        if primary is None:
+            return False
+        have = sum(
+            1 for eq in primary.equipment
+            if df._equipment_prefab(eq) == a["prefab"]
+        )
+        return have == int(a["quantity"])
 
     if e.op == "set_unspent_karma":
         if primary is None:
@@ -498,6 +521,46 @@ class SaveSession:
         self._append_edit(e)
         return e
 
+    def queue_set_item_quantity(self, prefab: str, quantity: int) -> PendingEdit:
+        """Set the absolute count of an item stack (0 removes it). This is the
+        op the inventory editor's steppers and delete buttons use."""
+        self._require_supported()
+        prefab = prefab.strip()
+        if not prefab:
+            raise ValueError("item prefab name must not be empty")
+        if quantity < 0:
+            raise ValueError(f"quantity must be >= 0, got {quantity}")
+        verb = "Remove" if quantity == 0 else "Set"
+        e = PendingEdit(
+            "set_item_quantity",
+            {"prefab": prefab, "quantity": int(quantity)},
+            f"{verb} item {prefab}" + ("" if quantity == 0 else f" ×{quantity}"),
+        )
+        self._append_edit(e)
+        return e
+
+    def queue_add_item(self, prefab: str, count: int = 1) -> PendingEdit:
+        """Add `count` copies of an item (additive — does not coalesce with
+        prior adds of the same prefab)."""
+        self._require_supported()
+        prefab = prefab.strip()
+        if not prefab:
+            raise ValueError("item prefab name must not be empty")
+        if count < 1:
+            raise ValueError(f"count must be >= 1, got {count}")
+        e = PendingEdit(
+            "add_item",
+            {"prefab": prefab, "count": int(count)},
+            f"Add item {prefab} ×{count}",
+        )
+        self._append_edit(e)
+        return e
+
+    def queue_remove_item(self, prefab: str) -> PendingEdit:
+        """Remove all copies of an item. Convenience wrapper over
+        set_item_quantity(prefab, 0) so the two share coalescing semantics."""
+        return self.queue_set_item_quantity(prefab, 0)
+
     def queue_set_karma(self, value: int) -> PendingEdit:
         self._require_supported()
         e = PendingEdit("set_unspent_karma", {"value": int(value)},
@@ -645,11 +708,34 @@ class SaveSession:
             attributes=dict(sheet.attributes),
             skills=dict(sheet.skills),
             etiquettes=dict(sheet.etiquettes),
+            inventory=self._build_inventory(sav_top),
             available_etiquettes=list(adapter.AVAILABLE_ETIQUETTES.keys()),
             available_attributes=list(adapter.AVAILABLE_ATTRIBUTES.keys()),
             available_skills=list(adapter.AVAILABLE_SKILLS.keys()),
             snapshot_count=sheet.snapshot_count,
         )
+
+    @staticmethod
+    def _build_inventory(sav_top: list[Field]) -> list[InventoryItemView]:
+        """Read the displayed snapshot's items and decorate each with catalog
+        metadata. Sorted by category display-order, then name, so the UI gets
+        a stable grouping without doing the sort itself."""
+        from . import catalog
+        counts = df.read_inventory(sav_top)
+        items: list[InventoryItemView] = []
+        for prefab, qty in counts.items():
+            info = catalog.describe(prefab)
+            items.append(InventoryItemView(
+                prefab=prefab,
+                display_name=info.display_name,
+                category=info.category,
+                subtype=info.subtype,
+                quantity=qty,
+            ))
+        order = {c: i for i, c in enumerate(catalog.CATEGORY_ORDER)}
+        items.sort(key=lambda it: (order.get(it.category, len(order)),
+                                   it.display_name.lower()))
+        return items
 
     def _current_sav_tree(self) -> list[Field]:
         """Re-parse the .sav (which is always _files[0]) and apply edits."""
@@ -680,6 +766,10 @@ class SaveSession:
             df.set_attribute(top, a["attr"], a["value"])
         elif e.op == "set_skill":
             df.set_skill(top, a["skill"], a["value"])
+        elif e.op == "set_item_quantity":
+            df.set_item_quantity(top, a["prefab"], a["quantity"])
+        elif e.op == "add_item":
+            df.add_item(top, a["prefab"], a.get("count", 1))
         elif e.op == "set_unspent_karma":
             df.set_unspent_karma(top, a["value"])
         elif e.op == "set_nuyen":

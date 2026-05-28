@@ -227,6 +227,17 @@ class PlayerSnapshot:
         f = find_first(self.container.children or [], 42, WIRE_LEN)
         return None if f is None else f.value.decode("utf-8", errors="replace")  # type: ignore[union-attr]
 
+    @property
+    def equipment(self) -> list[Field]:
+        """The repeated Equipment messages (CharacterInstance tag 5). One
+        entry per item the character carries; duplicates of the same prefab
+        represent a stack (the game has no quantity field — two HealthPacks
+        are two Equipment entries)."""
+        return [
+            c for c in (self.container.children or [])
+            if c.tag == 5 and c.wire == WIRE_LEN and c.children is not None
+        ]
+
     def has_meaningful_data(self) -> bool:
         """True if this snapshot has a built-up character (attributes set or
         skills set). Pre-character-creation skeleton snapshots are empty."""
@@ -470,6 +481,131 @@ def set_skill(top: list[Field], skill_name: str, value: int) -> EditReport:
         changed, old = _set_or_insert_varint(skills, tag, value)
         if changed:
             report.add(f"  player {snap.char_name or '?'}: {skill_name} {old} -> {value}")
+    return report
+
+
+# --------------------------------------------------------------------------- #
+# Inventory (Equipment)                                                       #
+# --------------------------------------------------------------------------- #
+
+def _equipment_prefab(eq: Field) -> str | None:
+    """The prefab_name (Equipment tag 1) of one Equipment field, or None."""
+    f = find_first(eq.children or [], 1, WIRE_LEN)
+    if f is None or not isinstance(f.value, (bytes, bytearray)):
+        return None
+    return f.value.decode("utf-8", errors="replace")
+
+
+def _new_equipment(prefab: str) -> Field:
+    """Build a minimal Equipment message carrying only a prefab_name. The
+    game resolves all other item data from the static ItemDef catalog at
+    load time, so a name-only entry is valid — every consumable/spell entry
+    in a real save is exactly this shape (tag 1 and nothing else)."""
+    name = Field(tag=1, wire=WIRE_LEN, value=prefab.encode("utf-8"), dirty=True)
+    eq = Field(tag=5, wire=WIRE_LEN, value=b"", children=[name], dirty=True)
+    eq.mark_dirty()
+    return eq
+
+
+def _insert_equipment(container: Field, eq: Field) -> None:
+    """Insert an Equipment field among the container's existing tag-5 entries,
+    preserving the engine's roughly-tag-ordered field layout."""
+    assert container.children is not None
+    last_eq_idx = -1
+    for i, c in enumerate(container.children):
+        if c.tag == 5:
+            last_eq_idx = i
+    insert_at = last_eq_idx + 1 if last_eq_idx >= 0 else len(container.children)
+    container.children.insert(insert_at, eq)
+    container.mark_dirty()
+
+
+def read_inventory(top: list[Field]) -> dict[str, int]:
+    """Return ``{prefab_name: quantity}`` for the primary (displayed) player
+    snapshot. Quantity is the number of Equipment entries sharing that prefab.
+    Empty dict if there's no player snapshot."""
+    primary = primary_player_snapshot(top)
+    if primary is None:
+        return {}
+    counts: dict[str, int] = {}
+    for eq in primary.equipment:
+        name = _equipment_prefab(eq)
+        if name is None:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def add_item(top: list[Field], prefab: str, count: int = 1) -> EditReport:
+    """Append `count` copies of `prefab` to every meaningful player snapshot.
+
+    Propagating to all snapshots (not just the displayed one) matches how the
+    other edits behave and keeps the inventory consistent across the autosave
+    blocks and scene caches in the file, so the game can't restore a pre-edit
+    loadout when re-entering a visited scene (plan §10 note 2)."""
+    if count < 1:
+        raise ValueError(f"count must be >= 1, got {count}")
+    report = EditReport(operation="add_item", target=f"{prefab} x{count}")
+    for snap in find_player_snapshots(top):
+        if not snap.has_meaningful_data():
+            continue
+        for _ in range(count):
+            _insert_equipment(snap.container, _new_equipment(prefab))
+        report.add(f"  player {snap.char_name or '?'}: +{count} {prefab}")
+    return report
+
+
+def remove_item(top: list[Field], prefab: str, count: int | None = None) -> EditReport:
+    """Remove up to `count` copies of `prefab` (or all copies if count is None)
+    from every meaningful player snapshot."""
+    report = EditReport(operation="remove_item", target=prefab)
+    for snap in find_player_snapshots(top):
+        if not snap.has_meaningful_data():
+            continue
+        assert snap.container.children is not None
+        matches = [
+            c for c in snap.container.children
+            if c.tag == 5 and c.wire == WIRE_LEN and _equipment_prefab(c) == prefab
+        ]
+        if not matches:
+            continue
+        to_drop = matches if count is None else matches[:count]
+        drop_set = set(id(m) for m in to_drop)
+        snap.container.children[:] = [
+            c for c in snap.container.children if id(c) not in drop_set
+        ]
+        snap.container.mark_dirty()
+        report.add(f"  player {snap.char_name or '?'}: -{len(to_drop)} {prefab}")
+    return report
+
+
+def set_item_quantity(top: list[Field], prefab: str, quantity: int) -> EditReport:
+    """Make every meaningful player snapshot hold exactly `quantity` copies of
+    `prefab` — adding or removing entries as needed. quantity 0 removes it."""
+    if quantity < 0:
+        raise ValueError(f"quantity must be >= 0, got {quantity}")
+    report = EditReport(operation="set_item_quantity", target=f"{prefab}={quantity}")
+    for snap in find_player_snapshots(top):
+        if not snap.has_meaningful_data():
+            continue
+        assert snap.container.children is not None
+        matches = [
+            c for c in snap.container.children
+            if c.tag == 5 and c.wire == WIRE_LEN and _equipment_prefab(c) == prefab
+        ]
+        have = len(matches)
+        if have == quantity:
+            continue
+        if have > quantity:
+            drop_set = set(id(m) for m in matches[quantity:])
+            snap.container.children[:] = [
+                c for c in snap.container.children if id(c) not in drop_set
+            ]
+            snap.container.mark_dirty()
+        else:
+            for _ in range(quantity - have):
+                _insert_equipment(snap.container, _new_equipment(prefab))
+        report.add(f"  player {snap.char_name or '?'}: {prefab} {have} -> {quantity}")
     return report
 
 

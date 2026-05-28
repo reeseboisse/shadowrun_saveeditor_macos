@@ -233,6 +233,68 @@ def test_hongkong_has_no_alice_fund(hk_session: SaveSession) -> None:
     assert c.alice_fund is None
 
 
+# --------------------------------------------------------------------------- #
+# Inventory editor (game-agnostic; exercised against HK)                      #
+# --------------------------------------------------------------------------- #
+
+def test_inventory_view_populated_and_decorated(hk_session: SaveSession) -> None:
+    c = hk_session.character()
+    assert c is not None
+    assert c.inventory, "expected a non-empty inventory"
+    by_prefab = {it.prefab: it for it in c.inventory}
+    # Stacks are counted (the HK reference save carries two HealthPack_med).
+    assert by_prefab["HealthPack_med"].quantity == 2
+    # Catalog metadata rides along.
+    ar = by_prefab["AR 3 Colt M23"]
+    assert ar.category == "weapon" and ar.subtype == "Assault Rifle"
+
+
+def test_inventory_set_quantity_round_trips(hk_session: SaveSession) -> None:
+    hk_session.queue_set_item_quantity("HealthPack_hi", 25)
+    written = hk_session.commit()
+    assert written, "expected at least one file to change"
+    sess2 = SaveSession.open(hk_session.slot.sav_path)
+    inv = {it.prefab: it.quantity for it in sess2.character().inventory}
+    assert inv["HealthPack_hi"] == 25
+
+
+def test_inventory_add_new_prefab_round_trips(hk_session: SaveSession) -> None:
+    hk_session.queue_add_item("Spell Fireball 4", 2)
+    hk_session.commit()
+    sess2 = SaveSession.open(hk_session.slot.sav_path)
+    inv = {it.prefab: it.quantity for it in sess2.character().inventory}
+    assert inv.get("Spell Fireball 4") == 2
+
+
+def test_inventory_remove_drops_item(hk_session: SaveSession) -> None:
+    hk_session.queue_remove_item("DocWagonPlatinum")
+    hk_session.commit()
+    sess2 = SaveSession.open(hk_session.slot.sav_path)
+    inv = {it.prefab: it.quantity for it in sess2.character().inventory}
+    assert "DocWagonPlatinum" not in inv
+
+
+def test_inventory_set_quantity_coalesces_and_noops(hk_session: SaveSession) -> None:
+    # Two set_quantity ops on the same prefab → only the latest survives.
+    hk_session.queue_set_item_quantity("HealthPack_hi", 10)
+    hk_session.queue_set_item_quantity("HealthPack_hi", 25)
+    assert len(hk_session.pending_edits) == 1
+    assert hk_session.pending_edits[0].args["quantity"] == 25
+    # Setting a prefab to the quantity it already has is a no-op (dropped).
+    hk_session.clear()
+    hk_session.queue_set_item_quantity("AR 3 Colt M23", 1)  # already exactly 1
+    assert hk_session.pending_edits == []
+
+
+def test_inventory_edit_propagates_to_srt(hk_session: SaveSession) -> None:
+    hk_session.queue_set_item_quantity("HealthPack_hi", 9)
+    written = hk_session.commit()
+    # Both the .sav and its .srt scene cache should be rewritten so the game
+    # can't restore the pre-edit loadout on scene re-entry (plan §10 note 2).
+    assert any(w.endswith(".sav") for w in written)
+    assert any(w.endswith(".srt") for w in written)
+
+
 def test_world_flags_listed_with_value_kinds(df_session: SaveSession) -> None:
     flags = df_session.world_flags()
     # Sanity: Dragonfall always emits some non-trivial number of flags
