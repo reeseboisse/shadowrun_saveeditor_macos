@@ -251,6 +251,18 @@ final class EditorState: ObservableObject {
         await apply { try await $0.setSkill(handle: $1, skill: skill, value: v) }
     }
 
+    func setItemQuantity(_ prefab: String, _ quantity: Int) async {
+        await apply { try await $0.setItemQuantity(handle: $1, prefab: prefab, quantity: quantity) }
+    }
+
+    func addItem(_ prefab: String, count: Int = 1) async {
+        await apply { try await $0.addItem(handle: $1, prefab: prefab, count: count) }
+    }
+
+    func removeItem(_ prefab: String) async {
+        await apply { try await $0.removeItem(handle: $1, prefab: prefab) }
+    }
+
     func setWorldFlag(_ name: String, kind: String, value: Any) async {
         await apply { try await $0.setWorldFlag(handle: $1, name: name, kind: kind, value: value) }
     }

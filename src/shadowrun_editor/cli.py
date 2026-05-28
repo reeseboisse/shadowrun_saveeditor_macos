@@ -215,6 +215,19 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         print("\n  etiquettes:")
         for k, v in sorted(sheet.etiquettes.items()):
             print(f"    {k:<14} {v}")
+
+    inv = df.read_inventory(top)
+    if inv:
+        from . import catalog
+        print("\n  inventory:")
+        rows = sorted(
+            inv.items(),
+            key=lambda kv: (catalog.describe(kv[0]).category, kv[0].lower()),
+        )
+        for prefab, qty in rows:
+            info = catalog.describe(prefab)
+            tag = f"[{info.category}]"
+            print(f"    {tag:<12} x{qty:<3} {prefab}")
     return 0
 
 
@@ -224,6 +237,34 @@ def cmd_set_etiquette(args: argparse.Namespace) -> int:
     changed = _apply_to_slot(
         slot,
         lambda top: df.set_etiquette(top, args.etiquette),
+        dry_run=args.dry_run,
+        no_backup=args.no_backup,
+    )
+    print(f"\n{changed} file(s) changed")
+    return 0
+
+
+def cmd_set_item(args: argparse.Namespace) -> int:
+    """Set an item stack to an absolute quantity (0 removes it)."""
+    slot = _resolve_slot(args.slot)
+    print(f"Slot: {slot.uuid}  ({1 + len(slot.srt_paths)} file(s))")
+    changed = _apply_to_slot(
+        slot,
+        lambda top: df.set_item_quantity(top, args.prefab, args.quantity),
+        dry_run=args.dry_run,
+        no_backup=args.no_backup,
+    )
+    print(f"\n{changed} file(s) changed")
+    return 0
+
+
+def cmd_add_item(args: argparse.Namespace) -> int:
+    """Add copies of an item by prefab id."""
+    slot = _resolve_slot(args.slot)
+    print(f"Slot: {slot.uuid}  ({1 + len(slot.srt_paths)} file(s))")
+    changed = _apply_to_slot(
+        slot,
+        lambda top: df.add_item(top, args.prefab, args.count),
         dry_run=args.dry_run,
         no_backup=args.no_backup,
     )
@@ -365,6 +406,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("value", type=int)
     _edit_common(sp)
     sp.set_defaults(func=_make_named_int_edit_cmd("set_skill", "set_skill", "skill"))
+
+    sp = sub.add_parser(
+        "set-item",
+        help="Set an inventory item to an absolute quantity (0 removes it)",
+    )
+    sp.add_argument("prefab", help="Engine item prefab id, e.g. 'HealthPack_hi'")
+    sp.add_argument("quantity", type=int, help="Target stack size (0 to remove)")
+    _edit_common(sp)
+    sp.set_defaults(func=cmd_set_item)
+
+    sp = sub.add_parser("add-item", help="Add copies of an inventory item by prefab id")
+    sp.add_argument("prefab", help="Engine item prefab id, e.g. 'Grenade 2 (Frag)'")
+    sp.add_argument("--count", type=int, default=1, help="How many to add (default 1)")
+    _edit_common(sp)
+    sp.set_defaults(func=cmd_add_item)
 
     sp = sub.add_parser("list-flags", help="List world flags in a save")
     sp.add_argument("path", help=".sav file or save-slot folder")

@@ -14,8 +14,8 @@ treated as authoritative).
 schema extractor that produces JSON bundles from each game's
 `ShadowrunDTO.dll` and `Assembly-CSharp.dll`, three generated schema
 bundles (Returns / Dragonfall / Hong Kong), and a CLI covering inspect,
-verify, etiquette / attribute / skill / karma / nuyen edits, and a
-world-flag listing.
+verify, etiquette / attribute / skill / karma / nuyen / inventory edits,
+and a world-flag listing.
 
 Phase 1 exit criterion is met: every save in the reference corpus
 round-trips byte-for-byte through the engine, and edits both
@@ -23,16 +23,22 @@ same-width (etiquette tag flip) and width-growing (karma 1B→3B varint,
 with cascading length-prefix recomputation up the message tree)
 re-serialize to valid protobuf that parses back to the expected state.
 
-**Phase 2 in progress** — SwiftUI macOS frontend (Xcode project via
+**Phases 2–4 complete** — SwiftUI macOS frontend (Xcode project via
 xcodegen) wired up to the Python engine over a JSON-RPC stdio bridge.
-The bridge has been built and tested in isolation here; the Swift sources
-live under [macos/](macos/) and need to be built on a real macOS
-machine. Two-tier UI: rich character editor (steppers, dropdowns, grouped
-skills) and a basic world-flags list (flat searchable table + filter
-chips + warning banner). The save-slot picker is game-neutral — it lists
-saves from all three games even though only Dragonfall edits are
-functional, with a "support arrives in Phase N" placeholder for the
-others.
+The Swift sources live under [macos/](macos/) and are built on a real
+macOS machine. Two-tier UI: rich character editor (steppers, dropdowns,
+grouped skills) and a basic world-flags list (flat searchable table +
+filter chips + warning banner). The save-slot picker is game-neutral and
+all three games — Returns, Dragonfall, and Hong Kong — are editable
+end-to-end, with per-game etiquette/skill/attribute surfaces and
+in-game-verified edits.
+
+**Phase 5 in progress** — polish. The inventory editor is in: items are
+read from the player snapshot and grouped/labeled by a heuristic catalog
+(real names live in the games' content packs, which aren't bundled), and
+the user can adjust stack quantities, remove items, or add new ones by
+prefab id. Edits propagate to the `.srt` scene caches so the game can't
+restore a pre-edit loadout on scene re-entry.
 
 ## Layout
 
@@ -94,6 +100,10 @@ shadowrun-editor set-karma  --slot reference/saves/dragonfall 100000
 shadowrun-editor set-nuyen  --slot reference/saves/dragonfall 999999
 shadowrun-editor set-attribute body 6 --slot reference/saves/dragonfall
 shadowrun-editor set-skill   decking 7 --slot reference/saves/dragonfall
+
+# Inventory (by engine prefab id; 0 quantity removes the stack)
+shadowrun-editor set-item HealthPack_hi 42 --slot reference/saves/hongkong
+shadowrun-editor add-item "Grenade 2 (Frag)" --count 5 --slot reference/saves/hongkong
 
 # World flags (read-only listing; Phase 2 GUI will get the editor)
 shadowrun-editor list-flags reference/saves/dragonfall/<uuid>.sav --filter Global_

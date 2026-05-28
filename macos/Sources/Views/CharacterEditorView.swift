@@ -49,6 +49,8 @@ struct CharacterEditorView: View {
                     etiquettesSection(c)
                     attributesSection(c)
                     skillsSection(c)
+                    InventorySectionView(items: c.inventory)
+                        .environmentObject(editor)
                     Spacer(minLength: 24)
                 } else {
                     Text("No player character found in this save.")
@@ -233,6 +235,116 @@ private func prettify(_ name: String) -> String {
 
 private func prettifyEtiquette(_ name: String) -> String {
     name.prefix(1).uppercased() + name.dropFirst()
+}
+
+// MARK: - Inventory
+
+/// Inventory editor section. Items arrive pre-sorted by the backend
+/// (category display-order, then name); this view groups the contiguous
+/// runs into labeled sections, lets the user adjust each stack's quantity
+/// or delete it, and add new items by prefab id.
+struct InventorySectionView: View {
+    let items: [InventoryItem]
+    @EnvironmentObject var editor: EditorState
+
+    @State private var newItemPrefab: String = ""
+
+    /// A contiguous run of items sharing a category, for a labeled subsection.
+    private struct InventoryGroup: Identifiable {
+        let category: String
+        let title: String
+        var items: [InventoryItem]
+        var id: String { category }
+    }
+
+    // Group while preserving the backend's order. Same-category items are
+    // already contiguous, so a single pass yields ordered groups.
+    private var groups: [InventoryGroup] {
+        var out: [InventoryGroup] = []
+        for item in items {
+            if !out.isEmpty, out[out.count - 1].category == item.category {
+                out[out.count - 1].items.append(item)
+            } else {
+                out.append(InventoryGroup(category: item.category,
+                                          title: item.categoryTitle,
+                                          items: [item]))
+            }
+        }
+        return out
+    }
+
+    var body: some View {
+        GroupBox("Inventory") {
+            VStack(alignment: .leading, spacing: 12) {
+                if items.isEmpty {
+                    Text("No items on this character.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(groups) { group in
+                        Text(group.title)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        ForEach(group.items) { item in
+                            itemRow(item)
+                        }
+                    }
+                }
+                Divider().padding(.vertical, 2)
+                addItemRow
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func itemRow(_ item: InventoryItem) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.systemImage)
+                .frame(width: 20)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.display_name)
+                if let sub = item.subtype {
+                    Text(sub).font(.caption).foregroundStyle(.tertiary)
+                }
+            }
+            Spacer()
+            IntStepperField(
+                value: item.quantity,
+                range: 1...99,
+                onCommit: { v in Task { await editor.setItemQuantity(item.prefab, v) } }
+            )
+            Button(role: .destructive) {
+                Task { await editor.removeItem(item.prefab) }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove all \(item.display_name)")
+        }
+    }
+
+    private var addItemRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                TextField("Item prefab id (e.g. HealthPack_hi)", text: $newItemPrefab)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(submitNewItem)
+                Button("Add", action: submitNewItem)
+                    .disabled(newItemPrefab.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            Text("Items are added by their engine prefab id. The game fills in stats, icon, and description from its own catalog at load — names here are derived heuristically since the content packs aren't bundled.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func submitNewItem() {
+        let prefab = newItemPrefab.trimmingCharacters(in: .whitespaces)
+        guard !prefab.isEmpty else { return }
+        Task { await editor.addItem(prefab) }
+        newItemPrefab = ""
+    }
 }
 
 struct IntStepperField: View {

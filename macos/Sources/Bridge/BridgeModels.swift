@@ -45,6 +45,55 @@ struct SaveSummary: Codable, Identifiable, Hashable {
 
 // MARK: - Character editor view model
 
+/// One inventory stack. `prefab` is the engine id edits target; the rest is
+/// presentation derived by the Python catalog (no .cpack data is bundled, so
+/// these are heuristics — see catalog.py).
+struct InventoryItem: Codable, Hashable, Identifiable {
+    var prefab: String
+    var display_name: String
+    var category: String
+    var subtype: String?
+    var quantity: Int
+
+    var id: String { prefab }
+
+    /// SF Symbol for the item's category. Falls back to a generic cube.
+    var systemImage: String {
+        switch category {
+        case "weapon":     return "scope"
+        case "grenade":    return "burst.fill"
+        case "spell":      return "sparkles"
+        case "foci":       return "wand.and.stars"
+        case "medkit":     return "cross.case.fill"
+        case "consumable": return "pills.fill"
+        case "drone":      return "airplane"
+        case "outfit":     return "tshirt.fill"
+        case "service":    return "phone.fill"
+        case "totem":      return "pawprint.fill"
+        case "kit":        return "shippingbox.fill"
+        default:            return "cube.box.fill"
+        }
+    }
+
+    /// Human-friendly section header for the category.
+    var categoryTitle: String {
+        switch category {
+        case "weapon":     return "Weapons"
+        case "grenade":    return "Grenades"
+        case "spell":      return "Spells"
+        case "foci":       return "Foci"
+        case "medkit":     return "Medkits"
+        case "consumable": return "Consumables"
+        case "drone":      return "Drones"
+        case "outfit":     return "Outfits"
+        case "service":    return "Services"
+        case "totem":      return "Totems"
+        case "kit":        return "Starter Kits"
+        default:            return "Other Items"
+        }
+    }
+}
+
 struct CharacterView: Codable, Hashable {
     var name: String?
     var prefab: String?
@@ -57,6 +106,7 @@ struct CharacterView: Codable, Hashable {
     var attributes: [String: Int]
     var skills: [String: Int]
     var etiquettes: [String: Int]
+    var inventory: [InventoryItem]
     // Game-specific editor surfaces. Returns excludes paranormal/infected
     // etiquettes and chi_casting/drone_combat/drain_resistance skills;
     // Dragonfall excludes paranormal/infected and chi_casting. The UI

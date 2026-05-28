@@ -330,6 +330,20 @@ actor PythonBridge {
         try await call("set_skill", params: ["handle": handle, "skill": skill, "value": value])
     }
 
+    func setItemQuantity(handle: Int, prefab: String, quantity: Int) async throws -> RefreshResponse {
+        try await call("set_item_quantity",
+                       params: ["handle": handle, "prefab": prefab, "quantity": quantity])
+    }
+
+    func addItem(handle: Int, prefab: String, count: Int) async throws -> RefreshResponse {
+        try await call("add_item",
+                       params: ["handle": handle, "prefab": prefab, "count": count])
+    }
+
+    func removeItem(handle: Int, prefab: String) async throws -> RefreshResponse {
+        try await call("remove_item", params: ["handle": handle, "prefab": prefab])
+    }
+
     func setWorldFlag(handle: Int, name: String, kind: String, value: Any) async throws -> RefreshResponse {
         try await call("set_world_flag",
                        params: ["handle": handle, "name": name, "kind": kind, "value": value])
