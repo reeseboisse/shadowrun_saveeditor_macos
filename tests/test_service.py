@@ -49,13 +49,13 @@ def test_summary_returns_is_recognized_and_supported(tmp_path: Path) -> None:
     assert s.supported is True
 
 
-def test_summary_hongkong_is_recognized_but_unsupported(tmp_path: Path) -> None:
+def test_summary_hongkong_is_recognized_and_supported(tmp_path: Path) -> None:
     dst = tmp_path / "hk"
     shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
     sess = SaveSession.open(dst)
     s = sess.summary()
     assert s.game == "hongkong"
-    assert s.supported is False
+    assert s.supported is True
 
 
 def test_character_view_has_etiquette(df_session: SaveSession) -> None:
@@ -105,12 +105,10 @@ def test_commit_writes_files_and_creates_backups(df_session: SaveSession) -> Non
     assert "academic" in c.etiquettes
 
 
-def test_unsupported_game_raises_on_edit(tmp_path: Path) -> None:
-    dst = tmp_path / "hk"
-    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
-    sess = SaveSession.open(dst)
-    with pytest.raises(UnsupportedGame):
-        sess.queue_set_etiquette("academic")
+# All three trilogy games are now supported end-to-end, so there's no
+# fixture left that should raise UnsupportedGame on edit. The exception
+# type itself is kept around as defense-in-depth in case a future build
+# loads a save tagged with an unknown game id.
 
 
 # --------------------------------------------------------------------------- #
@@ -180,6 +178,61 @@ def test_returns_has_no_alice_fund(rt_session: SaveSession) -> None:
     assert c.alice_fund is None
 
 
+# --------------------------------------------------------------------------- #
+# Hong Kong coverage                                                          #
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def hk_session(tmp_path: Path) -> SaveSession:
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    return SaveSession.open(dst)
+
+
+def test_hongkong_session_opens_and_round_trips(hk_session: SaveSession) -> None:
+    """With no edits queued, commit is a no-op and bytes are unchanged."""
+    assert hk_session.game == "hongkong"
+    assert hk_session.supported is True
+    assert hk_session.commit() == []
+    from shadowrun_editor.protobuf_engine import parse_toplevel, serialize_message
+    sav = hk_session.slot.sav_path.read_bytes()
+    assert serialize_message(parse_toplevel(sav)) == sav
+
+
+def test_hongkong_character_view_has_hk_specific_lists(hk_session: SaveSession) -> None:
+    c = hk_session.character()
+    assert c is not None
+    # HK is the only game whose scripts actually trigger paranormal/infected.
+    assert "paranormal" in c.available_etiquettes
+    assert "infected" in c.available_etiquettes
+    # HK is the only game whose scripts use chi_casting.
+    assert "chi_casting" in c.available_skills
+    # Alice Fund is Dragonfall-only.
+    assert c.alice_fund is None
+
+
+def test_hongkong_accepts_paranormal_etiquette_and_round_trips(hk_session: SaveSession) -> None:
+    hk_session.queue_set_etiquette("paranormal")
+    written = hk_session.commit()
+    assert written, "expected at least one file to change"
+    sess2 = SaveSession.open(hk_session.slot.sav_path)
+    c = sess2.character()
+    assert c is not None
+    assert "paranormal" in c.etiquettes
+
+
+def test_hongkong_accepts_chi_casting_skill(hk_session: SaveSession) -> None:
+    # Should NOT raise — chi_casting is in HK's available set.
+    hk_session.queue_set_skill("chi_casting", 3)
+    assert any(e.op == "set_skill" for e in hk_session.pending_edits)
+
+
+def test_hongkong_has_no_alice_fund(hk_session: SaveSession) -> None:
+    c = hk_session.character()
+    assert c is not None
+    assert c.alice_fund is None
+
+
 def test_world_flags_listed_with_value_kinds(df_session: SaveSession) -> None:
     flags = df_session.world_flags()
     # Sanity: Dragonfall always emits some non-trivial number of flags
@@ -207,4 +260,6 @@ def test_scan_all_saves_with_explicit_folders(tmp_path: Path) -> None:
     out = scan_all_saves([parent / "df", parent / "rt", parent / "hk"])
     games = {s.game for s in out}
     assert games == {"dragonfall", "returns", "hongkong"}
-    assert {s.supported for s in out} == {True, False}
+    # Every game is supported as of Phase 4; if a future build adds an
+    # unrecognized game id this becomes a meaningful boundary check again.
+    assert {s.supported for s in out} == {True}

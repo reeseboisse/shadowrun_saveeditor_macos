@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .domain import _common as df  # shared engine; per-game adapter selected at session creation
-from .domain import dragonfall, returns
+from .domain import dragonfall, hongkong, returns
 from .protobuf_engine import parse_toplevel, serialize_message, Field, WIRE_VARINT
 from .savefile import (
     SaveSlot,
@@ -47,6 +47,7 @@ from .savefile import (
 _ADAPTERS: dict[str, Any] = {
     "dragonfall": dragonfall,
     "returns":    returns,
+    "hongkong":   hongkong,
 }
 SUPPORTED_GAMES = set(_ADAPTERS.keys())
 KNOWN_GAMES = {"dragonfall", "returns", "hongkong"}
