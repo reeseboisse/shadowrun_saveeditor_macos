@@ -84,6 +84,13 @@ ETIQUETTE_TAGS: set[int] = set(ETIQUETTES.values())
 
 
 # Attribute names (Attributes message, tags 1-9).
+#
+# NOTE: these values are a *modifier over a content-pack racial base sheet*
+# (character_sheet_id = "CG <Race> None"), not the effective attribute the
+# game shows. The base isn't bundled, so a displayed value can differ from
+# the in-game screen by the racial base, and an attribute left at base reads
+# as 0 (omitted on the wire). Edits still write/round-trip correctly. Full
+# write-up + fix path in SHADOWRUN_EDITOR_PLAN.md §10 gotcha 12.
 ATTRIBUTES: dict[str, int] = {
     "body":         1,
     "quickness":    2,
