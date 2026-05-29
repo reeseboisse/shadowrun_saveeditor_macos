@@ -37,7 +37,7 @@ Grab the latest `ShadowrunEditor-<version>.zip` from the repository's
 ```
 
 Then launch `ShadowrunEditor.app`. The build is **ad-hoc signed, not
-notarized** (no paid Apple Developer ID), so the first launch needs a
+notarized** (refuse to buy a paid Apple Developer ID), so the first launch needs a
 one-time **System Settings → Privacy & Security → Open Anyway**. Full
 details, including optional content-pack setup, are in
 [macos/INSTALL.md](macos/INSTALL.md).
