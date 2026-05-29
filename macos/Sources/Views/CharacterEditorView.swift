@@ -331,6 +331,7 @@ struct InventorySectionView: View {
                     Text(sub).font(.caption).foregroundStyle(.tertiary)
                 }
             }
+            .help(item.description ?? item.prefab)
             Spacer()
             IntStepperField(
                 value: item.quantity,

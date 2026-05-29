@@ -16,3 +16,6 @@ macos/build/
 macos/DerivedData/
 *.xcuserstate
 xcuserdata/
+
+# Extracted content-pack catalogs (game text; generated locally by content_extractor)
+/catalog/

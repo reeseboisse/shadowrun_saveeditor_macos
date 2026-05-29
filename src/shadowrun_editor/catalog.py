@@ -21,8 +21,17 @@ rest of the app only consumes :func:`describe`.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+# Where extracted per-game catalogs live (mirrors schemas/ at the repo root).
+# Generated locally by content_extractor and intentionally NOT committed
+# (item descriptions are game text); the editor degrades to the heuristics
+# below when the file is absent.
+CATALOG_DIR = Path(__file__).resolve().parents[2] / "catalog"
 
 
 # Item categories, ordered for stable display grouping. The string values are
@@ -98,6 +107,52 @@ class ItemInfo:
     display_name: str    # tidied name for the UI
     category: str         # one of the CATEGORY_* constants
     subtype: str | None   # e.g. weapon class ("Shotgun"), else None
+    description: str | None = None  # real flavor/description text, if cataloged
+
+
+@dataclass(frozen=True)
+class GameCatalog:
+    """Parsed content-pack catalog for one game (see content_extractor)."""
+    game: str
+    items: dict        # prefab -> {"name", "description", "icon", "type_value"}
+    base_sheets: dict   # sheet id ("CG Elf None") -> {attribute: base_value}
+
+
+@lru_cache(maxsize=8)
+def load_game_catalog(game: str | None) -> GameCatalog | None:
+    """Load catalog/<game>.json if it exists, else None. Cached; call
+    load_game_catalog.cache_clear() if the file changes at runtime."""
+    if not game:
+        return None
+    path = CATALOG_DIR / f"{game}.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+    return GameCatalog(
+        game=game,
+        items=data.get("items", {}) or {},
+        base_sheets=data.get("base_sheets", {}) or {},
+    )
+
+
+def base_attributes(game: str | None, character_sheet_id: str | None) -> dict | None:
+    """Racial base attributes for a character_sheet_id (e.g. 'CG Elf None'),
+    from the extracted catalog. None if no catalog or no matching sheet.
+    Match is case-insensitive since the save's id casing can vary."""
+    cat = load_game_catalog(game)
+    if cat is None or not character_sheet_id:
+        return None
+    sheets = cat.base_sheets
+    if character_sheet_id in sheets:
+        return sheets[character_sheet_id]
+    low = character_sheet_id.lower()
+    for sid, attrs in sheets.items():
+        if sid.lower() == low:
+            return attrs
+    return None
 
 
 def _strip_namespace(prefab: str) -> str:
@@ -157,13 +212,27 @@ def categorize(prefab: str) -> tuple[str, str | None]:
     return CATEGORY_ITEM, None
 
 
-def describe(prefab: str) -> ItemInfo:
-    """Full presentation metadata for a prefab id. Pure function of the
-    string; safe to call per-item without caching."""
+def describe(prefab: str, game: str | None = None) -> ItemInfo:
+    """Presentation metadata for a prefab id. When `game` is given and an
+    extracted catalog is present, the real in-game name and description are
+    used; otherwise the name falls back to the prettified prefab id. Category
+    is always derived from the prefab id (stable regardless of the catalog),
+    so weapon grouping etc. work the same with or without content packs."""
     category, subtype = categorize(prefab)
+    display_name = _prettify(prefab)
+    description: str | None = None
+    cat = load_game_catalog(game)
+    if cat is not None:
+        entry = cat.items.get(prefab)
+        if entry:
+            name = entry.get("name")
+            if name:
+                display_name = name
+            description = entry.get("description")
     return ItemInfo(
         prefab=prefab,
-        display_name=_prettify(prefab),
+        display_name=display_name,
         category=category,
         subtype=subtype,
+        description=description,
     )

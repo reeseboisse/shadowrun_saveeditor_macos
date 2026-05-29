@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .protobuf_engine import Field, parse_toplevel
+from .domain._common import ATTRIBUTES
 
 CATALOG_FORMAT = "shadowrun-editor-catalog/1"
 
@@ -58,6 +59,13 @@ _ITEM_UIREP = 3
 _UIREP_ICON = 1
 _UIREP_NAME = 2
 _UIREP_DESC = 3
+
+# Character (.ch_sht) field tags. tag 4 is `stats` (message:Attributes) per
+# the schema and confirmed by hex dump of cg <race> none sheets, which carry
+# the racial base attributes (e.g. Elf: charisma 2, essence 6, others 1).
+_SHEET_ID = 1
+_SHEET_STATS = 4
+_ATTR_BY_TAG = {tag: name for name, tag in ATTRIBUTES.items()}
 
 
 @dataclass
@@ -148,14 +156,75 @@ def extract_items(content_packs: Path) -> dict[str, ItemEntry]:
     return out
 
 
+def parse_char_sheet(data: bytes) -> tuple[str, dict[str, int]] | None:
+    """Parse one `.ch_sht.bytes` (a Character message) into
+    (sheet_id, {attribute_name: base_value}). The sheet id is normalized by
+    dropping the trailing ".ch_sht" so it matches the save's
+    character_sheet_id (e.g. "CG Elf None"). Returns None if it has no id or
+    no readable stats."""
+    try:
+        top = parse_toplevel(data)
+    except Exception:
+        return None
+    sid = _as_str(_find(top, _SHEET_ID))
+    if not sid:
+        return None
+    if sid.endswith(".ch_sht"):
+        sid = sid[: -len(".ch_sht")]
+    stats = _find(top, _SHEET_STATS)
+    if stats is None:
+        return None
+    kids = stats.children
+    if kids is None and isinstance(stats.value, (bytes, bytearray)):
+        try:
+            kids = parse_toplevel(stats.value)
+        except Exception:
+            kids = None
+    if not kids:
+        return None
+    attrs: dict[str, int] = {}
+    for f in kids:
+        if f.wire == 0 and f.tag in _ATTR_BY_TAG:
+            attrs[_ATTR_BY_TAG[f.tag]] = int(f.value)  # type: ignore[arg-type]
+    if not attrs:
+        return None
+    return sid, attrs
+
+
+def iter_char_sheet_files(content_packs: Path) -> Iterator[Path]:
+    yield from content_packs.rglob("*.ch_sht.bytes")
+
+
+def extract_base_sheets(content_packs: Path) -> dict[str, dict[str, int]]:
+    """Base attribute sheets for character generation. The player's
+    character_sheet_id is always "CG <Race> None", so we keep the
+    generation sheets (filename starts "cg ") and skip the hundreds of NPC
+    sheets. Keyed by normalized sheet id."""
+    out: dict[str, dict[str, int]] = {}
+    for path in iter_char_sheet_files(content_packs):
+        if not path.name.lower().startswith("cg "):
+            continue
+        try:
+            parsed = parse_char_sheet(path.read_bytes())
+        except OSError:
+            continue
+        if parsed is not None:
+            sid, attrs = parsed
+            out[sid] = attrs
+    return out
+
+
 def build_catalog(content_packs: Path, game: str) -> dict:
     items = extract_items(content_packs)
+    base_sheets = extract_base_sheets(content_packs)
     return {
         "format": CATALOG_FORMAT,
         "game": game,
         "extracted_at": date.today().isoformat(),
         "item_count": len(items),
+        "base_sheet_count": len(base_sheets),
         "items": {k: items[k].to_json() for k in sorted(items)},
+        "base_sheets": {k: base_sheets[k] for k in sorted(base_sheets)},
     }
 
 

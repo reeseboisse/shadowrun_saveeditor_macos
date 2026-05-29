@@ -54,6 +54,7 @@ struct InventoryItem: Codable, Hashable, Identifiable {
     var category: String
     var subtype: String?
     var quantity: Int
+    var description: String?
 
     var id: String { prefab }
 

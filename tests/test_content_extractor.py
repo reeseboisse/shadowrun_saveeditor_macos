@@ -10,7 +10,13 @@ the extractor against an actual ContentPacks directory.
 
 from __future__ import annotations
 
-from shadowrun_editor.content_extractor import parse_item_def
+from pathlib import Path
+
+from shadowrun_editor.content_extractor import (
+    build_catalog,
+    parse_char_sheet,
+    parse_item_def,
+)
 from shadowrun_editor.protobuf_engine import (
     Field,
     WIRE_LEN,
@@ -73,3 +79,61 @@ def test_parse_empty_or_garbage_returns_none() -> None:
     # No tag-1 id present.
     only_type = serialize_message([Field(tag=2, wire=WIRE_VARINT, value=1, dirty=True)])
     assert parse_item_def(only_type) is None
+
+
+# --- character base sheets ------------------------------------------------- #
+
+def _make_char_sheet(sheet_id: str, base: dict[str, int]) -> bytes:
+    # Character message: tag1 id, tag4 stats (Attributes). Attributes tags:
+    # body=1 quickness=2 strength=3 charisma=4 intelligence=5 willpower=6
+    # essence=7 magic=8 reaction=9.
+    tagmap = {"body": 1, "quickness": 2, "strength": 3, "charisma": 4,
+              "intelligence": 5, "willpower": 6, "essence": 7, "magic": 8,
+              "reaction": 9}
+    stats_kids = [Field(tag=tagmap[n], wire=WIRE_VARINT, value=v, dirty=True)
+                  for n, v in base.items()]
+    top = [
+        Field(tag=1, wire=WIRE_LEN, value=sheet_id.encode(), dirty=True),
+        Field(tag=4, wire=WIRE_LEN, value=b"", children=stats_kids, dirty=True),
+    ]
+    return serialize_message(top)
+
+
+def test_parse_char_sheet_reads_racial_base() -> None:
+    # The real Elf base from the hex dump.
+    data = _make_char_sheet("CG Elf None.ch_sht", {
+        "body": 1, "quickness": 1, "strength": 1, "charisma": 2,
+        "intelligence": 1, "willpower": 1, "essence": 6, "magic": 0,
+        "reaction": 4,
+    })
+    parsed = parse_char_sheet(data)
+    assert parsed is not None
+    sid, attrs = parsed
+    assert sid == "CG Elf None"          # ".ch_sht" stripped
+    assert attrs["charisma"] == 2 and attrs["essence"] == 6
+    assert attrs["body"] == 1 and attrs["magic"] == 0
+
+
+def test_build_catalog_over_a_content_tree(tmp_path: Path) -> None:
+    cp = tmp_path / "ContentPacks"
+    items = cp / "HongKong" / "data" / "items"
+    chars = cp / "shadowrun_core" / "data" / "chars"
+    items.mkdir(parents=True)
+    chars.mkdir(parents=True)
+    (items / "healthpack_hi.item.bytes").write_bytes(
+        _make_item("HealthPack_hi", name="Premium Medkit",
+                   desc="Heals.", icon="icon_medkit3", type_value=9))
+    (chars / "cg elf none.ch_sht.bytes").write_bytes(
+        _make_char_sheet("CG Elf None.ch_sht", {"charisma": 2, "essence": 6}))
+    # An NPC sheet that must be skipped (doesn't start with "cg ").
+    (chars / "npc_guard.ch_sht.bytes").write_bytes(
+        _make_char_sheet("npc_guard.ch_sht", {"body": 9}))
+
+    cat = build_catalog(cp, "hongkong")
+    assert cat["format"] == "shadowrun-editor-catalog/1"
+    assert cat["item_count"] == 1
+    assert cat["items"]["HealthPack_hi"]["name"] == "Premium Medkit"
+    assert cat["base_sheet_count"] == 1
+    assert "CG Elf None" in cat["base_sheets"]
+    assert "npc_guard" not in cat["base_sheets"]
+    assert cat["base_sheets"]["CG Elf None"]["charisma"] == 2

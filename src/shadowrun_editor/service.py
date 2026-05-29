@@ -113,6 +113,7 @@ class InventoryItemView:
     category: str
     subtype: str | None
     quantity: int
+    description: str | None = None
 
 
 @dataclass
@@ -842,7 +843,7 @@ class SaveSession:
             attributes=dict(sheet.attributes),
             skills=dict(sheet.skills),
             etiquettes=dict(sheet.etiquettes),
-            inventory=self._build_inventory(sav_top),
+            inventory=self._build_inventory(sav_top, self.game),
             available_etiquettes=list(adapter.AVAILABLE_ETIQUETTES.keys()),
             available_attributes=list(adapter.AVAILABLE_ATTRIBUTES.keys()),
             available_skills=list(adapter.AVAILABLE_SKILLS.keys()),
@@ -850,21 +851,24 @@ class SaveSession:
         )
 
     @staticmethod
-    def _build_inventory(sav_top: list[Field]) -> list[InventoryItemView]:
+    def _build_inventory(sav_top: list[Field], game: str) -> list[InventoryItemView]:
         """Read the displayed snapshot's items and decorate each with catalog
-        metadata. Sorted by category display-order, then name, so the UI gets
-        a stable grouping without doing the sort itself."""
+        metadata. Uses the extracted content-pack catalog for real names +
+        descriptions when present (keyed by game), else heuristics. Sorted by
+        category display-order, then name, so the UI gets a stable grouping
+        without doing the sort itself."""
         from . import catalog
         counts = df.read_inventory(sav_top)
         items: list[InventoryItemView] = []
         for prefab, qty in counts.items():
-            info = catalog.describe(prefab)
+            info = catalog.describe(prefab, game)
             items.append(InventoryItemView(
                 prefab=prefab,
                 display_name=info.display_name,
                 category=info.category,
                 subtype=info.subtype,
                 quantity=qty,
+                description=info.description,
             ))
         order = {c: i for i, c in enumerate(catalog.CATEGORY_ORDER)}
         items.sort(key=lambda it: (order.get(it.category, len(order)),

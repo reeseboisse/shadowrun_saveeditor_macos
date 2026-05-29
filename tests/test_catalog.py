@@ -46,3 +46,65 @@ def test_unknown_prefab_is_item_shown_verbatim() -> None:
     info = catalog.describe("CyberdeckSony")
     assert info.category == catalog.CATEGORY_ITEM
     assert info.display_name == "CyberdeckSony"
+
+
+# --- extracted-catalog integration ---------------------------------------- #
+
+import json as _json
+from shadowrun_editor import catalog as _catmod
+
+
+def _install_catalog(tmp_path, game, data) -> None:
+    """Point the catalog module at a temp dir holding one game's bundle."""
+    d = tmp_path / "catalog"
+    d.mkdir(exist_ok=True)
+    (d / f"{game}.json").write_text(_json.dumps(data), encoding="utf-8")
+    _catmod.CATALOG_DIR = d
+    _catmod.load_game_catalog.cache_clear()
+
+
+def test_describe_uses_catalog_name_and_description(tmp_path) -> None:
+    _install_catalog(tmp_path, "hongkong", {
+        "items": {
+            "AR 3 Colt M23": {"name": "Colt M23", "description": "Rifle: ...",
+                              "type_value": 2},
+        },
+        "base_sheets": {},
+    })
+    try:
+        info = catalog.describe("AR 3 Colt M23", "hongkong")
+        assert info.display_name == "Colt M23"          # real name, not prettified prefab
+        assert info.description.startswith("Rifle")
+        # Category still derived from the prefab, so grouping is unaffected.
+        assert info.category == catalog.CATEGORY_WEAPON
+        assert info.subtype == "Assault Rifle"
+    finally:
+        _catmod.CATALOG_DIR = _catmod.Path(__file__).resolve().parents[1] / "catalog"
+        _catmod.load_game_catalog.cache_clear()
+
+
+def test_describe_falls_back_when_no_catalog(tmp_path) -> None:
+    # Point at an empty dir → no bundle → heuristic prettify.
+    _catmod.CATALOG_DIR = tmp_path / "empty"
+    _catmod.load_game_catalog.cache_clear()
+    try:
+        info = catalog.describe("HealthPack_med", "hongkong")
+        assert info.display_name == "HealthPack med"   # prettified, not a real name
+        assert info.description is None
+    finally:
+        _catmod.CATALOG_DIR = _catmod.Path(__file__).resolve().parents[1] / "catalog"
+        _catmod.load_game_catalog.cache_clear()
+
+
+def test_base_attributes_lookup_is_case_insensitive(tmp_path) -> None:
+    _install_catalog(tmp_path, "hongkong", {
+        "items": {},
+        "base_sheets": {"CG Elf None": {"charisma": 2, "essence": 6, "body": 1}},
+    })
+    try:
+        base = catalog.base_attributes("hongkong", "cg elf none")
+        assert base["charisma"] == 2 and base["essence"] == 6
+        assert catalog.base_attributes("hongkong", "CG Dwarf None") is None
+    finally:
+        _catmod.CATALOG_DIR = _catmod.Path(__file__).resolve().parents[1] / "catalog"
+        _catmod.load_game_catalog.cache_clear()
