@@ -85,12 +85,13 @@ ETIQUETTE_TAGS: set[int] = set(ETIQUETTES.values())
 
 # Attribute names (Attributes message, tags 1-9).
 #
-# NOTE: these values are a *modifier over a content-pack racial base sheet*
-# (character_sheet_id = "CG <Race> None"), not the effective attribute the
-# game shows. The base isn't bundled, so a displayed value can differ from
-# the in-game screen by the racial base, and an attribute left at base reads
-# as 0 (omitted on the wire). Edits still write/round-trip correctly. Full
-# write-up + fix path in SHADOWRUN_EDITOR_PLAN.md §10 gotcha 12.
+# NOTE: these stored values are a *modifier over a content-pack racial base
+# sheet* (character_sheet_id = "CG <Race> None"), not the effective attribute
+# the game shows. The service resolves effective = base + modifier when the
+# content-pack catalog is installed (see catalog.base_attributes / service
+# _effective_attributes); without it, the raw modifier is shown and an
+# attribute left at base reads as 0. Full write-up in
+# SHADOWRUN_EDITOR_PLAN.md §10 gotcha 12.
 ATTRIBUTES: dict[str, int] = {
     "body":         1,
     "quickness":    2,
@@ -219,6 +220,14 @@ class PlayerSnapshot:
     @property
     def prefab_name(self) -> str | None:
         f = find_first(self.container.children or [], 1, WIRE_LEN)
+        return None if f is None else f.value.decode("utf-8", errors="replace")  # type: ignore[union-attr]
+
+    @property
+    def character_sheet_id(self) -> str | None:
+        """CharacterInstance tag 2 — the base sheet this character derives
+        from, e.g. 'CG Elf None'. Used to resolve racial base attributes from
+        the content-pack catalog (stored stats are modifiers over this base)."""
+        f = find_first(self.container.children or [], 2, WIRE_LEN)
         return None if f is None else f.value.decode("utf-8", errors="replace")  # type: ignore[union-attr]
 
     @property

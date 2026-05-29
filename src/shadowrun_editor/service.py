@@ -295,6 +295,11 @@ class SaveSession:
         ]
         self._edits: list[PendingEdit] = []
         self._cached_original_top: list[Field] | None = None
+        # Racial base attributes for this character's sheet, resolved from the
+        # content-pack catalog (empty when no catalog is installed). Stored
+        # stats are modifiers over this base; display adds it, edits subtract
+        # it. Computed lazily once per session.
+        self._attr_bases: dict[str, int] | None = None
 
     # ----- factories ----- #
 
@@ -639,7 +644,14 @@ class SaveSession:
                 f"attribute {attr!r} is not used by {self.game}; "
                 f"available: {sorted(self._adapter.AVAILABLE_ATTRIBUTES)}"
             )
-        e = PendingEdit("set_attribute", {"attr": attr, "value": int(value)},
+        # `value` is the effective attribute the user sees/sets. Stored stats
+        # are modifiers over the racial base, so write (value - base) when the
+        # base is known; without a catalog, base is absent and we store the
+        # value as-is (prior behavior). The save/no-op machinery stays entirely
+        # in modifier space — only this boundary translates.
+        base = self._attribute_bases().get(attr)
+        stored = int(value) - base if base is not None else int(value)
+        e = PendingEdit("set_attribute", {"attr": attr, "value": stored},
                         f"{attr} = {value}")
         self._append_edit(e)
         return e
@@ -840,7 +852,7 @@ class SaveSession:
             unspent_karma=sheet.unspent_karma,
             nuyen=df.read_nuyen(sav_top),
             alice_fund=alice_fund,
-            attributes=dict(sheet.attributes),
+            attributes=self._effective_attributes(sheet, adapter),
             skills=dict(sheet.skills),
             etiquettes=dict(sheet.etiquettes),
             inventory=self._build_inventory(sav_top, self.game),
@@ -849,6 +861,23 @@ class SaveSession:
             available_skills=list(adapter.AVAILABLE_SKILLS.keys()),
             snapshot_count=sheet.snapshot_count,
         )
+
+    def _effective_attributes(self, sheet, adapter) -> dict[str, int]:
+        """Resolve displayed attribute values. Stored stats are modifiers over
+        a racial base; when the base is known (catalog installed) the editable
+        attributes show base + modifier, and an attribute the save omits still
+        shows its base instead of 0. Without a catalog this returns the stored
+        values unchanged (prior behavior)."""
+        bases = self._attribute_bases()
+        out = dict(sheet.attributes)
+        if not bases:
+            return out
+        for attr in adapter.AVAILABLE_ATTRIBUTES:
+            base = bases.get(attr)
+            if base is None:
+                continue
+            out[attr] = base + sheet.attributes.get(attr, 0)
+        return out
 
     @staticmethod
     def _build_inventory(sav_top: list[Field], game: str) -> list[InventoryItemView]:
@@ -874,6 +903,18 @@ class SaveSession:
         items.sort(key=lambda it: (order.get(it.category, len(order)),
                                    it.display_name.lower()))
         return items
+
+    def _attribute_bases(self) -> dict[str, int]:
+        """Racial base attributes for this character, from the catalog, keyed
+        by attribute name. Empty dict when no catalog is installed (then the
+        editor works in raw stored-modifier space, as it did pre-catalog).
+        The character_sheet_id is stable, so this is computed once."""
+        if self._attr_bases is None:
+            from . import catalog
+            snap = df.primary_player_snapshot(self._original_top())
+            sheet_id = snap.character_sheet_id if snap else None
+            self._attr_bases = catalog.base_attributes(self.game, sheet_id) or {}
+        return self._attr_bases
 
     def _current_sav_tree(self) -> list[Field]:
         """Re-parse the .sav (which is always _files[0]) and apply edits."""

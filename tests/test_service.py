@@ -482,3 +482,88 @@ def test_set_etiquette_rating_round_trips(hk_template_session: SaveSession) -> N
     hk_template_session.commit()
     sess2 = SaveSession.open(hk_template_session.slot.sav_path)
     assert sess2.character().etiquettes["gang"] == 5
+
+
+# --------------------------------------------------------------------------- #
+# Base-attribute resolution (effective = racial base + stored modifier)       #
+# --------------------------------------------------------------------------- #
+
+from shadowrun_editor import catalog as _catmod  # noqa: E402
+from shadowrun_editor.protobuf_engine import parse_toplevel as _parse  # noqa: E402
+from shadowrun_editor.domain import _common as _df  # noqa: E402
+
+# The real Elf base sheet (CG Elf None), from the content-pack hex dump.
+_ELF_BASE = {"body": 1, "quickness": 1, "strength": 1, "charisma": 2,
+             "intelligence": 1, "willpower": 1, "essence": 6, "magic": 0,
+             "reaction": 4}
+
+
+def _install_hk_elf_catalog(tmp_path: Path) -> None:
+    import json
+    d = tmp_path / "catalog"
+    d.mkdir(exist_ok=True)
+    (d / "hongkong.json").write_text(json.dumps(
+        {"items": {}, "base_sheets": {"CG Elf None": _ELF_BASE}}), encoding="utf-8")
+    _catmod.CATALOG_DIR = d
+    _catmod.load_game_catalog.cache_clear()
+
+
+def _restore_catalog_dir() -> None:
+    _catmod.CATALOG_DIR = _catmod.Path(__file__).resolve().parents[1] / "catalog"
+    _catmod.load_game_catalog.cache_clear()
+
+
+def test_effective_attributes_add_racial_base(tmp_path: Path) -> None:
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    # Raw stored modifiers (no catalog): read straight from the snapshot.
+    snap = _df.primary_player_snapshot(_parse((dst / next(p.name for p in dst.iterdir() if p.suffix == ".sav")).read_bytes()))
+    stored = {name: 0 for name in ("body", "quickness", "strength", "charisma",
+                                   "intelligence", "willpower", "magic")}
+    for c in (snap.attributes.children or []):
+        if c.wire == 0:
+            for nm, tag in _df.ATTRIBUTES.items():
+                if tag == c.tag and nm in stored:
+                    stored[nm] = _df._signed_int32(int(c.value))
+
+    _install_hk_elf_catalog(tmp_path)
+    try:
+        sess = SaveSession.open(dst)
+        attrs = sess.character().attributes
+        for nm in stored:
+            assert attrs[nm] == _ELF_BASE[nm] + stored[nm], nm
+        # An attribute the save omits (modifier 0) still shows its base.
+        assert attrs["intelligence"] == _ELF_BASE["intelligence"] + stored["intelligence"]
+    finally:
+        _restore_catalog_dir()
+
+
+def test_set_attribute_writes_modifier_over_base(tmp_path: Path) -> None:
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    _install_hk_elf_catalog(tmp_path)
+    try:
+        sess = SaveSession.open(dst)
+        # User sets effective charisma to 9; base is 2, so stored modifier = 7.
+        e = sess.queue_set_attribute("charisma", 9)
+        assert e.args["value"] == 9 - _ELF_BASE["charisma"]
+        sess.commit()
+        sess2 = SaveSession.open(dst)
+        assert sess2.character().attributes["charisma"] == 9   # base+mod, round-trips
+    finally:
+        _restore_catalog_dir()
+
+
+def test_attributes_unchanged_without_catalog(tmp_path: Path) -> None:
+    # Point at an empty catalog dir → effective == stored modifier (old behavior).
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    _catmod.CATALOG_DIR = tmp_path / "no_catalog"
+    _catmod.load_game_catalog.cache_clear()
+    try:
+        sess = SaveSession.open(dst)
+        before = sess.character().attributes.get("charisma")
+        sess.queue_set_attribute("charisma", 7)  # stored as-is, no base math
+        assert sess.pending_edits[0].args["value"] == 7
+    finally:
+        _restore_catalog_dir()
