@@ -187,3 +187,9 @@ SHADOWRUN_EDITOR_PLAN.md     # design notes + empirically-discovered gotchas
   content-pack racial base sheet (`CG <Race> None`); the editor resolves
   effective = base + modifier when a catalog is present. See
   `SHADOWRUN_EDITOR_PLAN.md` §10 for this and other gotchas.
+
+## License
+
+Licensed under the GNU General Public License v3.0 or later. See
+[LICENSE](LICENSE). This is an unofficial fan tool; Shadowrun and its save
+data are property of their respective owners and no game content is bundled.
