@@ -38,7 +38,11 @@ read from the player snapshot and grouped/labeled by a heuristic catalog
 (real names live in the games' content packs, which aren't bundled), and
 the user can adjust stack quantities, remove items, or add new ones by
 prefab id. Edits propagate to the `.srt` scene caches so the game can't
-restore a pre-edit loadout on scene re-entry.
+restore a pre-edit loadout on scene re-entry. Characters can also be
+exported to / imported from a versioned JSON template (resources,
+attributes, skills, etiquettes with ratings, and inventory) for backup or
+sharing a build — import applies set-semantics, skips fields not valid for
+the target game, and queues the changes for review before saving.
 
 ## Layout
 
@@ -104,6 +108,10 @@ shadowrun-editor set-skill   decking 7 --slot reference/saves/dragonfall
 # Inventory (by engine prefab id; 0 quantity removes the stack)
 shadowrun-editor set-item HealthPack_hi 42 --slot reference/saves/hongkong
 shadowrun-editor add-item "Grenade 2 (Frag)" --count 5 --slot reference/saves/hongkong
+
+# Character templates (JSON) — back up, share a build, or copy across saves
+shadowrun-editor export-character --slot reference/saves/hongkong -o coomer.json
+shadowrun-editor import-character coomer.json --slot reference/saves/hongkong --dry-run
 
 # World flags (read-only listing; Phase 2 GUI will get the editor)
 shadowrun-editor list-flags reference/saves/dragonfall/<uuid>.sav --filter Global_

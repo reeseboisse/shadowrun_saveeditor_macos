@@ -349,6 +349,14 @@ actor PythonBridge {
                        params: ["handle": handle, "name": name, "kind": kind, "value": value])
     }
 
+    func exportCharacter(handle: Int) async throws -> ExportCharacterResponse {
+        try await call("export_character", params: ["handle": handle])
+    }
+
+    func importCharacter(handle: Int, json: String) async throws -> ImportCharacterResponse {
+        try await call("import_character", params: ["handle": handle, "json": json])
+    }
+
     func undo(handle: Int) async throws -> RefreshResponse {
         try await call("undo", params: ["handle": handle])
     }

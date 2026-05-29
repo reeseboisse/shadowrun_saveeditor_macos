@@ -8,6 +8,8 @@
 
 import Foundation
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class EditorState: ObservableObject {
@@ -265,6 +267,66 @@ final class EditorState: ObservableObject {
 
     func setWorldFlag(_ name: String, kind: String, value: Any) async {
         await apply { try await $0.setWorldFlag(handle: $1, name: name, kind: kind, value: value) }
+    }
+
+    // MARK: - Character template import / export
+
+    /// Export the open character to a JSON file chosen via a save panel.
+    func exportCharacter() async {
+        guard let b = bridge, let h = openSave?.handle else { return }
+        do {
+            let r = try await b.exportCharacter(handle: h)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = Self.templateFilename(name: r.name, game: r.game)
+            panel.title = "Export Character Template"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try r.json.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Import a JSON character template chosen via an open panel. The
+    /// template's edits are queued (not committed) so the user reviews them
+    /// in the pending list before saving. Fields the bridge couldn't apply
+    /// (e.g. from a different game) are summarized in an info alert.
+    func importCharacter() async {
+        guard let b = bridge, let h = openSave?.handle else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.title = "Import Character Template"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let myGen = openGeneration
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let r = try await b.importCharacter(handle: h, json: text)
+            guard myGen == openGeneration, openSave?.handle == h else { return }
+            openSave = OpenSave(
+                handle: h, summary: r.summary, character: r.character,
+                worldFlags: r.world_flags, pendingEdits: r.pending_edits, diff: r.diff
+            )
+            if let rep = r.import_report, !rep.skipped.isEmpty {
+                let alert = NSAlert()
+                alert.alertStyle = .informational
+                alert.messageText = "Imported \(rep.applied.count) field(s)"
+                alert.informativeText =
+                    "Some entries were skipped (not valid for this save):\n• "
+                    + rep.skipped.joined(separator: "\n• ")
+                alert.runModal()
+            }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private static func templateFilename(name: String?, game: String) -> String {
+        let base = (name?.isEmpty == false ? name! : "character")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "_")
+        return "\(base.isEmpty ? "character" : base)-\(game).json"
     }
 
     func undo() async {

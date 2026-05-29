@@ -98,6 +98,24 @@ struct CharacterEditorView: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer()
+            VStack(spacing: 6) {
+                Button {
+                    Task { await editor.exportCharacter() }
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .help("Save this character to a JSON template")
+                Button {
+                    Task { await editor.importCharacter() }
+                } label: {
+                    Label("Import…", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .help("Load a JSON template and queue its changes for review")
+            }
+            .buttonStyle(.bordered)
+            .fixedSize()
         }
     }
 

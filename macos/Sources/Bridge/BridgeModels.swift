@@ -252,6 +252,30 @@ struct ScanResponse: Codable {
     var saves: [SaveSummary]
 }
 
+// MARK: - Character template import / export
+
+struct ExportCharacterResponse: Codable {
+    var json: String        // the template, pretty-printed; written to disk verbatim
+    var name: String?
+    var game: String
+}
+
+struct ImportReport: Codable {
+    var applied: [String]
+    var skipped: [String]
+}
+
+/// Same shape as RefreshResponse plus the import report. Import queues the
+/// template's edits; they show in the pending list like any other edit.
+struct ImportCharacterResponse: Codable {
+    var summary: SaveSummary
+    var character: CharacterView?
+    var world_flags: [WorldFlagView]
+    var pending_edits: [PendingEdit]
+    var diff: [String]
+    var import_report: ImportReport?
+}
+
 struct DiscoverResponse: Codable {
     var folders: [String: [String]]
 }
