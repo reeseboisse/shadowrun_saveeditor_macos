@@ -396,7 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_donate_to_alice_fund)
 
     sp = sub.add_parser("set-attribute", help="Set a player attribute")
-    sp.add_argument("attribute", choices=sorted(df.ATTRIBUTES.keys()))
+    # Exclude derived attributes (reaction/essence) — the engine computes
+    # them and stores internal values, so they aren't player-editable.
+    attr_choices = sorted(set(df.ATTRIBUTES) - df.DERIVED_ATTRIBUTES)
+    sp.add_argument("attribute", choices=attr_choices)
     sp.add_argument("value", type=int)
     _edit_common(sp)
     sp.set_defaults(func=_make_named_int_edit_cmd("set_attribute", "set_attribute", "attribute"))

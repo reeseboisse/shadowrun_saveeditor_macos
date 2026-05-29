@@ -96,18 +96,11 @@ private struct OpenSaveView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top chrome: debug banner + (optional) pending-edits banner +
-            // segmented Picker. Held at intrinsic vertical size with
-            // layoutPriority(1) so a Table inside the active tab cannot
-            // squash these elements to zero height.
+            // Top chrome: (optional) pending-edits banner + segmented
+            // Picker. Held at intrinsic vertical size with layoutPriority(1)
+            // so a Table inside the active tab cannot squash these elements
+            // to zero height.
             VStack(spacing: 0) {
-                Text("editor v0.3 — tab: \(tab.rawValue)")
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(4)
-                    .background(Color.red)
-
                 if !open.pendingEdits.isEmpty {
                     HStack(spacing: 12) {
                         Image(systemName: "pencil.tip.crop.circle")

@@ -11,7 +11,7 @@ absence of campaign-specific mechanics like the Alice Fund.
 from __future__ import annotations
 
 from ._common import *  # noqa: F401, F403
-from ._common import ATTRIBUTES, ETIQUETTES, NON_PLAYER_SKILLS, SKILLS
+from ._common import ATTRIBUTES, DERIVED_ATTRIBUTES, ETIQUETTES, NON_PLAYER_SKILLS, SKILLS
 
 
 GAME_ID = "returns"
@@ -26,7 +26,9 @@ GAME_ID = "returns"
 AVAILABLE_ETIQUETTES: dict[str, int] = {
     k: v for k, v in ETIQUETTES.items() if k not in ("paranormal", "infected")
 }
-AVAILABLE_ATTRIBUTES: dict[str, int] = dict(ATTRIBUTES)
+AVAILABLE_ATTRIBUTES: dict[str, int] = {
+    k: v for k, v in ATTRIBUTES.items() if k not in DERIVED_ATTRIBUTES
+}
 AVAILABLE_SKILLS: dict[str, int] = {
     k: v for k, v in SKILLS.items()
     if k not in ({"chi_casting", "drone_combat", "drain_resistance",

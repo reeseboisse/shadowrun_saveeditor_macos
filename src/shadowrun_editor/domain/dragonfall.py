@@ -18,6 +18,7 @@ from __future__ import annotations
 from ._common import *  # noqa: F401, F403
 from ._common import (
     ATTRIBUTES,
+    DERIVED_ATTRIBUTES,
     ETIQUETTES,
     EditReport,
     Field,
@@ -50,7 +51,9 @@ GAME_ID = "dragonfall"
 AVAILABLE_ETIQUETTES: dict[str, int] = {
     k: v for k, v in ETIQUETTES.items() if k not in ("paranormal", "infected")
 }
-AVAILABLE_ATTRIBUTES: dict[str, int] = dict(ATTRIBUTES)
+AVAILABLE_ATTRIBUTES: dict[str, int] = {
+    k: v for k, v in ATTRIBUTES.items() if k not in DERIVED_ATTRIBUTES
+}
 AVAILABLE_SKILLS: dict[str, int] = {
     k: v for k, v in SKILLS.items()
     if k not in ({"chi_casting", "cyberware_affinity"} | NON_PLAYER_SKILLS)

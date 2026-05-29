@@ -83,7 +83,7 @@ ETIQUETTES: dict[str, int] = {
 ETIQUETTE_TAGS: set[int] = set(ETIQUETTES.values())
 
 
-# Attribute names (Attributes message, tags 1-9 are core attributes)
+# Attribute names (Attributes message, tags 1-9).
 ATTRIBUTES: dict[str, int] = {
     "body":         1,
     "quickness":    2,
@@ -95,6 +95,18 @@ ATTRIBUTES: dict[str, int] = {
     "magic":        8,
     "reaction":     9,
 }
+
+# Attributes the player never spends karma on directly — the games derive
+# them at runtime, so CharacterMod.stats stores engine-internal values, not
+# something a user should set. Empirically across all three reference saves:
+# `reaction` is stored as a negative modifier/offset (-33 / -3 / -41, not a
+# real Reaction score) and `essence` is omitted entirely (it's 6 minus
+# cyberware, computed at load). They stay in ATTRIBUTES so any save still
+# reads + round-trips, but no adapter offers them as editable — a stepper
+# showing "-41" for Reaction is worse than no stepper. The other seven
+# (body/quickness/strength/charisma/intelligence/willpower/magic) are the
+# real karma-buyable attributes and their read/write is in-game verified.
+DERIVED_ATTRIBUTES: frozenset[str] = frozenset({"reaction", "essence"})
 
 
 # Skills (Skills message, tags 1-19 + 26-28 + 32; etiquettes are 20-25, 29-31)

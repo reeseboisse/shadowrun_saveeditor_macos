@@ -267,6 +267,26 @@ def test_non_player_skills_never_editable(game, slot, tmp_path: Path) -> None:
             sess.queue_set_skill(skill, 3)
 
 
+@pytest.mark.parametrize("game,slot", [
+    ("dragonfall", DF_SLOT), ("returns", RT_SLOT), ("hongkong", HK_SLOT),
+])
+def test_derived_attributes_never_editable(game, slot, tmp_path: Path) -> None:
+    dst = tmp_path / game
+    shutil.copytree(slot, dst, ignore=shutil.ignore_patterns(".*"))
+    sess = SaveSession.open(dst)
+    c = sess.character()
+    assert c is not None
+    # reaction/essence are engine-derived — not offered for editing.
+    for attr in ("reaction", "essence"):
+        assert attr not in c.available_attributes, f"{attr} leaked into {game}"
+        with pytest.raises(ValueError):
+            sess.queue_set_attribute(attr, 5)
+    # The seven real karma attributes are all present and editable.
+    for attr in ("body", "quickness", "strength", "charisma",
+                 "intelligence", "willpower", "magic"):
+        assert attr in c.available_attributes, f"{attr} missing from {game}"
+
+
 @pytest.mark.parametrize("game,slot,expected", [
     ("dragonfall", DF_SLOT, False),
     ("returns", RT_SLOT, False),

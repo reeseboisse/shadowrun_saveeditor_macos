@@ -19,7 +19,7 @@ What HK gets that the earlier games don't:
 from __future__ import annotations
 
 from ._common import *  # noqa: F401, F403
-from ._common import ATTRIBUTES, ETIQUETTES, NON_PLAYER_SKILLS, SKILLS
+from ._common import ATTRIBUTES, DERIVED_ATTRIBUTES, ETIQUETTES, NON_PLAYER_SKILLS, SKILLS
 
 
 GAME_ID = "hongkong"
@@ -29,7 +29,9 @@ GAME_ID = "hongkong"
 # skills it hides are the non-player ones (athletics/negotiation/stealth)
 # that no title exposes for karma investment (see _common.NON_PLAYER_SKILLS).
 AVAILABLE_ETIQUETTES: dict[str, int] = dict(ETIQUETTES)
-AVAILABLE_ATTRIBUTES: dict[str, int] = dict(ATTRIBUTES)
+AVAILABLE_ATTRIBUTES: dict[str, int] = {
+    k: v for k, v in ATTRIBUTES.items() if k not in DERIVED_ATTRIBUTES
+}
 AVAILABLE_SKILLS: dict[str, int] = {
     k: v for k, v in SKILLS.items() if k not in NON_PLAYER_SKILLS
 }
