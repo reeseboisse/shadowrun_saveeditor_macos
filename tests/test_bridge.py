@@ -130,6 +130,39 @@ def test_inventory_methods_round_trip(tmp_path: Path):
     assert inv["Grenade 2 (Frag)"] == 3
 
 
+def test_export_and_import_character_round_trip(tmp_path: Path):
+    dst = tmp_path / "slot"
+    shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    sav = next(p for p in dst.iterdir() if p.suffix == ".sav")
+    h = _call("open_save", path=str(sav))["handle"]
+
+    exported = _call("export_character", handle=h)
+    assert exported["game"] == "dragonfall"
+    template = json.loads(exported["json"])
+    assert template["format"] == "shadowrun-editor-character/1"
+
+    # Mutate and import through the bridge.
+    template["resources"]["nuyen"] = 424242
+    r = _call("import_character", handle=h, json=json.dumps(template))
+    assert "import_report" in r
+    assert r["character"]["nuyen"] == 424242
+    assert any(e["op"] in ("set_nuyen",) for e in r["pending_edits"])
+
+    _call("commit", handle=h)
+    h2 = _call("open_save", path=str(sav))["handle"]
+    assert _call("refresh", handle=h2)["character"]["nuyen"] == 424242
+
+
+def test_import_character_bad_json_errors(tmp_path: Path):
+    dst = tmp_path / "slot"
+    shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    sav = next(p for p in dst.iterdir() if p.suffix == ".sav")
+    h = _call("open_save", path=str(sav))["handle"]
+    resp = bridge.dispatch({"id": 1, "method": "import_character",
+                            "params": {"handle": h, "json": "{not json"}})
+    assert "error" in resp
+
+
 def test_undo(tmp_path: Path):
     dst = tmp_path / "slot"
     shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))

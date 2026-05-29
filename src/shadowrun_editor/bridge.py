@@ -221,6 +221,34 @@ def m_set_world_flag(p: dict[str, Any]) -> dict[str, Any]:
     return _refresh_payload(sess)
 
 
+def m_export_character(p: dict[str, Any]) -> dict[str, Any]:
+    """Return the character template as a pretty-printed JSON string (the
+    Swift side writes it to disk verbatim) plus name/game for a default
+    filename."""
+    sess = _require(int(p["handle"]))
+    template = sess.export_character()
+    return {
+        "json": json.dumps(template, indent=2),
+        "name": template.get("name"),
+        "game": template.get("game"),
+    }
+
+
+def m_import_character(p: dict[str, Any]) -> dict[str, Any]:
+    """Parse a character-template JSON string and queue the edits it implies.
+    Returns the standard refresh payload plus an import_report of what was
+    applied vs skipped."""
+    sess = _require(int(p["handle"]))
+    try:
+        template = json.loads(p["json"])
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"file is not valid JSON: {e}") from e
+    report = sess.import_character(template)
+    payload = _refresh_payload(sess)
+    payload["import_report"] = report
+    return payload
+
+
 def m_undo(p: dict[str, Any]) -> dict[str, Any]:
     sess = _require(int(p["handle"]))
     sess.undo()
@@ -275,6 +303,8 @@ METHODS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "set_karma": m_set_karma,
     "set_nuyen": m_set_nuyen,
     "set_world_flag": m_set_world_flag,
+    "export_character": m_export_character,
+    "import_character": m_import_character,
     "undo": m_undo,
     "clear_pending": m_clear_pending,
     "commit": m_commit,

@@ -477,6 +477,39 @@ def remove_etiquette(top: list[Field], etiquette_name: str) -> EditReport:
     return report
 
 
+def set_etiquette_rating(top: list[Field], etiquette_name: str, rating: int) -> EditReport:
+    """Set an etiquette to an exact rating across all meaningful snapshots.
+    rating 0 removes it (same as remove_etiquette); >0 inserts/updates the
+    tag. Unlike add_etiquette (which won't lower or change an already-set
+    rating) this writes the precise value — needed to faithfully restore an
+    exported character template, where ratings above 1 matter."""
+    if etiquette_name not in ETIQUETTES:
+        raise ValueError(
+            f"unknown etiquette {etiquette_name!r}; valid: {sorted(ETIQUETTES)}"
+        )
+    if rating < 0:
+        raise ValueError(f"rating must be >= 0, got {rating}")
+    if rating == 0:
+        return remove_etiquette(top, etiquette_name)
+    target_tag = ETIQUETTES[etiquette_name]
+    report = EditReport(operation="set_etiquette_rating",
+                        target=f"{etiquette_name}={rating}")
+    for snap in find_player_snapshots(top):
+        if not snap.has_meaningful_data():
+            continue
+        skills = snap.skills
+        if skills is None or skills.children is None:
+            continue
+        changed, old = _set_or_insert_varint(skills, target_tag, rating)
+        if changed:
+            skills.children.sort(key=lambda f: f.tag)
+            report.add(
+                f"  player {snap.char_name or '?'}: {etiquette_name} "
+                f"rating {old or 0} -> {rating}"
+            )
+    return report
+
+
 def set_attribute(top: list[Field], attr_name: str, value: int) -> EditReport:
     if attr_name not in ATTRIBUTES:
         raise ValueError(f"unknown attribute {attr_name!r}; valid: {sorted(ATTRIBUTES)}")

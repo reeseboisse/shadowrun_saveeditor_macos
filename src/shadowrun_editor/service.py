@@ -52,6 +52,11 @@ _ADAPTERS: dict[str, Any] = {
 SUPPORTED_GAMES = set(_ADAPTERS.keys())
 KNOWN_GAMES = {"dragonfall", "returns", "hongkong"}
 
+# Versioned tag for exported character templates. Bump the trailing number
+# only on a breaking change to the template shape; import rejects formats it
+# doesn't recognize.
+CHARACTER_TEMPLATE_FORMAT = "shadowrun-editor-character/1"
+
 
 def _adapter_for(game: str):
     a = _ADAPTERS.get(game)
@@ -159,7 +164,7 @@ def _edit_target_key(e: PendingEdit) -> tuple | None:
         return ("nuyen",)
     if e.op == "set_world_flag":
         return ("world_flag", a["name"])
-    if e.op in ("add_etiquette", "remove_etiquette"):
+    if e.op in ("add_etiquette", "remove_etiquette", "set_etiquette_rating"):
         return ("etiquette_active", a["etiquette"])
     return None
 
@@ -214,6 +219,12 @@ def _edit_is_noop(e: PendingEdit, original_top: list[Field]) -> bool:
         if tag is None or primary is None:
             return False
         return _varint_in(primary.skills, tag) == 0
+
+    if e.op == "set_etiquette_rating":
+        tag = df.ETIQUETTES.get(a["etiquette"])
+        if tag is None or primary is None:
+            return False
+        return _varint_in(primary.skills, tag) == int(a["rating"])
 
     if e.op == "set_world_flag":
         name = a["name"]
@@ -450,6 +461,108 @@ class SaveSession:
             )
         return [latest[k] for k in sorted(latest)]
 
+    # ----- character template import / export ----- #
+
+    def export_character(self) -> dict[str, Any]:
+        """Serialize the displayed character (post-pending-edits) into a
+        JSON-able template: resources, the editable attributes/skills, active
+        etiquettes with ratings, and inventory quantities. Only the editable
+        surface is captured — derived attributes and non-player skills are
+        already excluded from the available_* lists, and attributes the save
+        omits aren't exported (so a re-import can't zero them). The game id +
+        format version let import validate and adapt."""
+        c = self.character()
+        if c is None:
+            raise ValueError("no player character found in this save")
+        attrs = {k: c.attributes[k] for k in c.available_attributes
+                 if k in c.attributes}
+        skills = {k: c.skills[k] for k in c.available_skills
+                  if c.skills.get(k)}
+        etiqs = {k: v for k, v in c.etiquettes.items() if v}
+        inventory = {it.prefab: it.quantity for it in c.inventory}
+        return {
+            "format": CHARACTER_TEMPLATE_FORMAT,
+            "game": self.game,
+            "name": c.name,
+            "resources": {
+                "unspent_karma": c.unspent_karma,
+                "nuyen": c.nuyen,
+            },
+            "attributes": attrs,
+            "skills": skills,
+            "etiquettes": etiqs,
+            "inventory": inventory,
+        }
+
+    def import_character(self, template: dict[str, Any]) -> dict[str, list[str]]:
+        """Queue edits to move the open save toward `template`. Set-semantics
+        for every field the template lists; fields it omits are left alone (so
+        a partial template is a valid 'patch'). Fields not valid for this game
+        — a HK-only skill in a Dragonfall save, an unknown prefab key with a
+        bad value — are skipped and reported rather than applied. Returns
+        {'applied': [...], 'skipped': [...]}. Nothing is committed; the queued
+        edits show up in the pending list for review."""
+        self._require_supported()
+        if not isinstance(template, dict):
+            raise ValueError("character template must be a JSON object")
+        fmt = template.get("format")
+        if fmt != CHARACTER_TEMPLATE_FORMAT:
+            raise ValueError(
+                f"unrecognized template format {fmt!r}; "
+                f"expected {CHARACTER_TEMPLATE_FORMAT!r}"
+            )
+        adapter = self._adapter
+        applied: list[str] = []
+        skipped: list[str] = []
+
+        src_game = template.get("game")
+        if src_game and src_game != self.game:
+            skipped.append(
+                f"note: template is from {src_game}; applying only fields "
+                f"valid for {self.game}"
+            )
+
+        def _is_int(v: Any) -> bool:
+            return isinstance(v, int) and not isinstance(v, bool)
+
+        res = template.get("resources") or {}
+        if _is_int(res.get("unspent_karma")):
+            self.queue_set_karma(int(res["unspent_karma"]))
+            applied.append("unspent_karma")
+        if _is_int(res.get("nuyen")):
+            self.queue_set_nuyen(int(res["nuyen"]))
+            applied.append("nuyen")
+
+        for attr, val in (template.get("attributes") or {}).items():
+            if attr in adapter.AVAILABLE_ATTRIBUTES and _is_int(val):
+                self.queue_set_attribute(attr, int(val))
+                applied.append(f"attribute {attr}")
+            else:
+                skipped.append(f"attribute {attr}")
+
+        for skill, val in (template.get("skills") or {}).items():
+            if skill in adapter.AVAILABLE_SKILLS and _is_int(val):
+                self.queue_set_skill(skill, int(val))
+                applied.append(f"skill {skill}")
+            else:
+                skipped.append(f"skill {skill}")
+
+        for etq, rating in (template.get("etiquettes") or {}).items():
+            if etq in adapter.AVAILABLE_ETIQUETTES and _is_int(rating):
+                self.queue_set_etiquette_rating(etq, int(rating))
+                applied.append(f"etiquette {etq}")
+            else:
+                skipped.append(f"etiquette {etq}")
+
+        for prefab, qty in (template.get("inventory") or {}).items():
+            if _is_int(qty) and int(qty) >= 0:
+                self.queue_set_item_quantity(prefab, int(qty))
+                applied.append(f"item {prefab}")
+            else:
+                skipped.append(f"item {prefab}")
+
+        return {"applied": applied, "skipped": skipped}
+
     # ----- edit queue ----- #
 
     def queue_set_etiquette(self, etiquette: str) -> PendingEdit:
@@ -493,6 +606,27 @@ class SaveSession:
             op="remove_etiquette",
             args={"etiquette": etiquette},
             description=f"Disable etiquette: {etiquette}",
+        )
+        self._append_edit(e)
+        return e
+
+    def queue_set_etiquette_rating(self, etiquette: str, rating: int) -> PendingEdit:
+        """Set an etiquette to an exact rating (0 disables it). Used by
+        character-template import to restore ratings faithfully."""
+        self._require_supported()
+        if etiquette not in self._adapter.AVAILABLE_ETIQUETTES:
+            raise ValueError(
+                f"etiquette {etiquette!r} is not used by {self.game}; "
+                f"available: {sorted(self._adapter.AVAILABLE_ETIQUETTES)}"
+            )
+        if rating < 0:
+            raise ValueError(f"rating must be >= 0, got {rating}")
+        verb = "Disable" if rating == 0 else "Set"
+        e = PendingEdit(
+            op="set_etiquette_rating",
+            args={"etiquette": etiquette, "rating": int(rating)},
+            description=f"{verb} etiquette: {etiquette}"
+                        + ("" if rating == 0 else f" (rating {rating})"),
         )
         self._append_edit(e)
         return e
@@ -762,6 +896,8 @@ class SaveSession:
             df.add_etiquette(top, a["etiquette"])
         elif e.op == "remove_etiquette":
             df.remove_etiquette(top, a["etiquette"])
+        elif e.op == "set_etiquette_rating":
+            df.set_etiquette_rating(top, a["etiquette"], a["rating"])
         elif e.op == "set_attribute":
             df.set_attribute(top, a["attr"], a["value"])
         elif e.op == "set_skill":

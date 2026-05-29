@@ -396,3 +396,89 @@ def test_scan_all_saves_with_explicit_folders(tmp_path: Path) -> None:
     # Every game is supported as of Phase 4; if a future build adds an
     # unrecognized game id this becomes a meaningful boundary check again.
     assert {s.supported for s in out} == {True}
+
+
+# --------------------------------------------------------------------------- #
+# Character template import / export                                          #
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def hk_template_session(tmp_path: Path) -> SaveSession:
+    dst = tmp_path / "hk"
+    shutil.copytree(HK_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    return SaveSession.open(dst)
+
+
+def test_export_character_shape(hk_template_session: SaveSession) -> None:
+    from shadowrun_editor.service import CHARACTER_TEMPLATE_FORMAT
+    tpl = hk_template_session.export_character()
+    assert tpl["format"] == CHARACTER_TEMPLATE_FORMAT
+    assert tpl["game"] == "hongkong"
+    for key in ("attributes", "skills", "etiquettes", "inventory", "resources"):
+        assert key in tpl
+    # Derived attributes / non-player skills never appear in an export.
+    assert "reaction" not in tpl["attributes"]
+    assert "essence" not in tpl["attributes"]
+    assert "stealth" not in tpl["skills"]
+
+
+def test_export_then_import_same_save_is_noop(hk_template_session: SaveSession) -> None:
+    tpl = hk_template_session.export_character()
+    report = hk_template_session.import_character(tpl)
+    assert report["applied"], "expected fields to be accepted"
+    # Every value already matches, so the coalescer drops them all.
+    assert hk_template_session.pending_edits == []
+    assert hk_template_session.has_changes() is False
+
+
+def test_import_mutated_template_round_trips(hk_template_session: SaveSession) -> None:
+    tpl = hk_template_session.export_character()
+    tpl["skills"]["ranged_combat"] = 9
+    tpl["etiquettes"]["gang"] = 4
+    tpl["resources"]["nuyen"] = 123456
+    tpl["inventory"]["HealthPack_hi"] = 20
+    hk_template_session.import_character(tpl)
+    hk_template_session.commit()
+    sess2 = SaveSession.open(hk_template_session.slot.sav_path)
+    c = sess2.character()
+    assert c.skills["ranged_combat"] == 9
+    assert c.etiquettes["gang"] == 4
+    assert c.nuyen == 123456
+    assert {it.prefab: it.quantity for it in c.inventory}["HealthPack_hi"] == 20
+
+
+def test_import_rejects_unknown_format(hk_template_session: SaveSession) -> None:
+    with pytest.raises(ValueError):
+        hk_template_session.import_character({"format": "bogus/9", "game": "hongkong"})
+
+
+def test_import_cross_game_skips_incompatible_fields(tmp_path: Path) -> None:
+    # A HK template carrying HK-only skills imported into Dragonfall: the
+    # HK-only fields are skipped, the shared ones applied.
+    from shadowrun_editor.service import CHARACTER_TEMPLATE_FORMAT
+    dst = tmp_path / "df"
+    shutil.copytree(DF_SLOT, dst, ignore=shutil.ignore_patterns(".*"))
+    sess = SaveSession.open(dst)
+    tpl = {
+        "format": CHARACTER_TEMPLATE_FORMAT,
+        "game": "hongkong",
+        "attributes": {"body": 6, "reaction": 9},      # reaction not editable
+        "skills": {"ranged_combat": 5, "chi_casting": 4, "cyberware_affinity": 2},
+        "etiquettes": {"gang": 1, "paranormal": 2},     # paranormal HK-only
+        "inventory": {},
+    }
+    report = sess.import_character(tpl)
+    joined = " ".join(report["applied"])
+    assert "skill ranged_combat" in joined and "attribute body" in joined
+    skipped = " ".join(report["skipped"])
+    for bad in ("chi_casting", "cyberware_affinity", "reaction", "paranormal"):
+        assert bad in skipped
+    # And the from-hongkong note is present.
+    assert any("hongkong" in s for s in report["skipped"])
+
+
+def test_set_etiquette_rating_round_trips(hk_template_session: SaveSession) -> None:
+    hk_template_session.queue_set_etiquette_rating("gang", 5)
+    hk_template_session.commit()
+    sess2 = SaveSession.open(hk_template_session.slot.sav_path)
+    assert sess2.character().etiquettes["gang"] == 5

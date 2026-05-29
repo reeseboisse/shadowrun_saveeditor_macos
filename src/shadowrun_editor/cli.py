@@ -27,6 +27,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -34,6 +35,7 @@ from typing import Callable
 
 from .domain import dragonfall as df
 from .protobuf_engine import parse_toplevel, serialize_message
+from .service import SaveSession
 from .savefile import (
     SaveSlot,
     atomic_write_bytes,
@@ -272,6 +274,54 @@ def cmd_add_item(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_character(args: argparse.Namespace) -> int:
+    """Write the player character to a JSON template (stdout if no -o)."""
+    slot = _resolve_slot(args.slot)
+    sess = SaveSession.open(slot.sav_path)
+    template = sess.export_character()
+    text = json.dumps(template, indent=2)
+    if args.output:
+        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        print(f"Wrote {args.output}  (game={template['game']}, "
+              f"character={template.get('name')!r})")
+    else:
+        print(text)
+    return 0
+
+
+def cmd_import_character(args: argparse.Namespace) -> int:
+    """Apply a JSON character template to a slot (queue + commit)."""
+    slot = _resolve_slot(args.slot)
+    try:
+        template = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    except (ValueError, OSError) as e:
+        print(f"error: cannot read template {args.file!r}: {e}", file=sys.stderr)
+        return 2
+    sess = SaveSession.open(slot.sav_path)
+    print(f"Slot: {slot.uuid}  (game={sess.game})")
+    try:
+        report = sess.import_character(template)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    for line in report["skipped"]:
+        print(f"  skipped: {line}")
+    print(f"  {len(report['applied'])} field(s) accepted from template")
+    if not sess.has_changes():
+        print("\nno changes (save already matches template)")
+        return 0
+    if args.dry_run:
+        print("\nWOULD change:")
+        for line in sess.diff_summary():
+            print(f"  {line}")
+        return 0
+    written = sess.commit(backup=not args.no_backup)
+    for w in written:
+        print(f"  PATCHED {Path(w).name}")
+    print(f"\n{len(written)} file(s) changed")
+    return 0
+
+
 def _make_int_edit_cmd(name: str, fn_name: str) -> Callable[[argparse.Namespace], int]:
     def _run(args: argparse.Namespace) -> int:
         slot = _resolve_slot(args.slot)
@@ -429,6 +479,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--count", type=int, default=1, help="How many to add (default 1)")
     _edit_common(sp)
     sp.set_defaults(func=cmd_add_item)
+
+    sp = sub.add_parser(
+        "export-character",
+        help="Write the player character to a JSON template",
+    )
+    sp.add_argument("--slot", required=True, help="Save-slot folder, .sav, or uuid")
+    sp.add_argument("-o", "--output", help="Output .json path (stdout if omitted)")
+    sp.set_defaults(func=cmd_export_character)
+
+    sp = sub.add_parser(
+        "import-character",
+        help="Apply a JSON character template to a slot",
+    )
+    sp.add_argument("file", help="Character template .json to import")
+    sp.add_argument("--slot", required=True, help="Save-slot folder, .sav, or uuid")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="Show what would change without writing")
+    sp.add_argument("--no-backup", action="store_true",
+                    help="Skip writing .bak backups")
+    sp.set_defaults(func=cmd_import_character)
 
     sp = sub.add_parser("list-flags", help="List world flags in a save")
     sp.add_argument("path", help=".sav file or save-slot folder")
