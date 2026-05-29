@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "schemas"
+SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 
 
 @dataclass(frozen=True)

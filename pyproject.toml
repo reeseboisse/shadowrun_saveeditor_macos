@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadowrun_editor"
-version = "0.1.0"
+version = "0.3.0"
 description = "Shadowrun trilogy save game editor"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,12 @@ shadowrun-editor-bridge = "shadowrun_editor.bridge:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Bundle the schema bundles inside the wheel so an installed (non-editable)
+# build finds them without the repo present. Catalogs are deliberately NOT
+# bundled (game text; generated locally into the user-data dir).
+[tool.setuptools.package-data]
+shadowrun_editor = ["schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

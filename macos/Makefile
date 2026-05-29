@@ -3,7 +3,7 @@
 # All targets assume you're on macOS with Xcode and xcodegen installed.
 #   brew install xcodegen
 
-.PHONY: help setup project build run clean
+.PHONY: help setup project build run release clean
 
 XCODEBUILD_FLAGS = -project ShadowrunEditor.xcodeproj \
                    -scheme ShadowrunEditor \
@@ -16,6 +16,7 @@ help:
 	@echo "  make project  Run xcodegen to materialize ShadowrunEditor.xcodeproj"
 	@echo "  make build    Build the app via xcodebuild"
 	@echo "  make run      Build and launch the app"
+	@echo "  make release  Build a distributable zip (app + wheel + installer) in dist/"
 	@echo "  make clean    Remove the generated .xcodeproj and build artifacts"
 
 setup:
@@ -32,5 +33,8 @@ run: build
 	@APP=$$(xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*BUILT_PRODUCTS_DIR/ {d=$$2} /^[[:space:]]*FULL_PRODUCT_NAME/ {n=$$2} END {print d "/" n}'); \
 	  echo "Opening $$APP"; open "$$APP"
 
+release:
+	@./scripts/package_release.sh
+
 clean:
-	rm -rf ShadowrunEditor.xcodeproj build
+	rm -rf ShadowrunEditor.xcodeproj build dist

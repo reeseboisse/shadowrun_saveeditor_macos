@@ -22,16 +22,33 @@ rest of the app only consumes :func:`describe`.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-# Where extracted per-game catalogs live (mirrors schemas/ at the repo root).
-# Generated locally by content_extractor and intentionally NOT committed
-# (item descriptions are game text); the editor degrades to the heuristics
-# below when the file is absent.
+# Extracted per-game catalogs are generated locally by content_extractor and
+# intentionally NOT committed (item descriptions are game text); the editor
+# degrades to the heuristics below when absent. CATALOG_DIR is the repo-root
+# location used by an editable dev checkout (and what tests monkeypatch);
+# catalog_search_dirs() also checks the user-data dir, which is where an
+# installed (wheel) build looks since the repo isn't present.
 CATALOG_DIR = Path(__file__).resolve().parents[2] / "catalog"
+USER_CATALOG_DIR = Path.home() / ".shadowrun-editor" / "catalog"
+
+
+def catalog_search_dirs() -> list[Path]:
+    """Directories searched for <game>.json, in priority order: an explicit
+    SHADOWRUN_EDITOR_CATALOG_DIR override, the user-data dir, then the
+    repo-root dir (editable dev checkout)."""
+    dirs: list[Path] = []
+    env = os.environ.get("SHADOWRUN_EDITOR_CATALOG_DIR")
+    if env:
+        dirs.append(Path(env).expanduser())
+    dirs.append(USER_CATALOG_DIR)
+    dirs.append(CATALOG_DIR)
+    return dirs
 
 
 # Item categories, ordered for stable display grouping. The string values are
@@ -120,12 +137,13 @@ class GameCatalog:
 
 @lru_cache(maxsize=8)
 def load_game_catalog(game: str | None) -> GameCatalog | None:
-    """Load catalog/<game>.json if it exists, else None. Cached; call
-    load_game_catalog.cache_clear() if the file changes at runtime."""
+    """Load <game>.json from the first catalog dir that has it, else None.
+    Cached; call load_game_catalog.cache_clear() if files change at runtime."""
     if not game:
         return None
-    path = CATALOG_DIR / f"{game}.json"
-    if not path.is_file():
+    path = next((d / f"{game}.json" for d in catalog_search_dirs()
+                 if (d / f"{game}.json").is_file()), None)
+    if path is None:
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
