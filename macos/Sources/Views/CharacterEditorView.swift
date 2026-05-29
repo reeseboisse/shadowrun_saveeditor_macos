@@ -30,10 +30,15 @@ private let skillGroupingHint: [(String, [String])] = [
     ("Tech", [
         "decking", "deck_build_repair", "drone_control", "drone_combat",
         "drone_build_repair", "remote_gunnery", "biotech",
+        // HK-only; sits with the other non-combat/non-magic skills. Only
+        // appears when the open save's available_skills includes it.
+        "cyberware_affinity",
     ]),
-    ("Other", [
-        "athletics", "stealth", "negotiation",
-    ]),
+    // athletics/stealth/negotiation are deliberately absent: they're fields
+    // in the Skills message but no game lets the player invest in them, so
+    // the adapters exclude them from available_skills. Any skill the adapter
+    // exposes that isn't named here still falls into a synthesized "Other"
+    // group below, so nothing is ever silently hidden.
 ]
 
 struct CharacterEditorView: View {

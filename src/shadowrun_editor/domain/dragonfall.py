@@ -21,6 +21,7 @@ from ._common import (
     ETIQUETTES,
     EditReport,
     Field,
+    NON_PLAYER_SKILLS,
     SKILLS,
     WIRE_LEN,
     WIRE_VARINT,
@@ -44,12 +45,15 @@ GAME_ID = "dragonfall"
 # - Skills: same set as Returns; chi_casting (26) is in the schema for
 #   all games but is only mechanically used by HK. Drone combat (28)
 #   and drain resistance (27) are common to Dragonfall and HK.
+#   cyberware_affinity (32) is HK-only (absent from this game's schema).
+#   athletics/negotiation/stealth are non-player skills (see _common).
 AVAILABLE_ETIQUETTES: dict[str, int] = {
     k: v for k, v in ETIQUETTES.items() if k not in ("paranormal", "infected")
 }
 AVAILABLE_ATTRIBUTES: dict[str, int] = dict(ATTRIBUTES)
 AVAILABLE_SKILLS: dict[str, int] = {
-    k: v for k, v in SKILLS.items() if k != "chi_casting"
+    k: v for k, v in SKILLS.items()
+    if k not in ({"chi_casting", "cyberware_affinity"} | NON_PLAYER_SKILLS)
 }
 
 

@@ -19,13 +19,17 @@ What HK gets that the earlier games don't:
 from __future__ import annotations
 
 from ._common import *  # noqa: F401, F403
-from ._common import ATTRIBUTES, ETIQUETTES, SKILLS
+from ._common import ATTRIBUTES, ETIQUETTES, NON_PLAYER_SKILLS, SKILLS
 
 
 GAME_ID = "hongkong"
 
-# HK is the most permissive of the three. Every etiquette and skill the
-# engine encodes is reachable through HK's scripts.
+# HK is the most permissive of the three: every etiquette is reachable, and
+# it's the only title that uses chi_casting and cyberware_affinity. The only
+# skills it hides are the non-player ones (athletics/negotiation/stealth)
+# that no title exposes for karma investment (see _common.NON_PLAYER_SKILLS).
 AVAILABLE_ETIQUETTES: dict[str, int] = dict(ETIQUETTES)
 AVAILABLE_ATTRIBUTES: dict[str, int] = dict(ATTRIBUTES)
-AVAILABLE_SKILLS: dict[str, int] = dict(SKILLS)
+AVAILABLE_SKILLS: dict[str, int] = {
+    k: v for k, v in SKILLS.items() if k not in NON_PLAYER_SKILLS
+}

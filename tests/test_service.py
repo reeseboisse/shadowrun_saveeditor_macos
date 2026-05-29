@@ -233,6 +233,57 @@ def test_hongkong_has_no_alice_fund(hk_session: SaveSession) -> None:
     assert c.alice_fund is None
 
 
+def test_hongkong_exposes_cyberware_affinity(hk_session: SaveSession) -> None:
+    c = hk_session.character()
+    assert c is not None
+    assert "cyberware_affinity" in c.available_skills
+
+
+def test_hongkong_cyberware_affinity_round_trips(hk_session: SaveSession) -> None:
+    hk_session.queue_set_skill("cyberware_affinity", 4)
+    hk_session.commit()
+    sess2 = SaveSession.open(hk_session.slot.sav_path)
+    c = sess2.character()
+    assert c is not None
+    assert c.skills.get("cyberware_affinity") == 4
+
+
+# --------------------------------------------------------------------------- #
+# Non-player skills + HK-only cyberware_affinity gating (cross-game)          #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("game,slot", [
+    ("dragonfall", DF_SLOT), ("returns", RT_SLOT), ("hongkong", HK_SLOT),
+])
+def test_non_player_skills_never_editable(game, slot, tmp_path: Path) -> None:
+    dst = tmp_path / game
+    shutil.copytree(slot, dst, ignore=shutil.ignore_patterns(".*"))
+    sess = SaveSession.open(dst)
+    c = sess.character()
+    assert c is not None
+    for skill in ("athletics", "negotiation", "stealth"):
+        assert skill not in c.available_skills, f"{skill} leaked into {game}"
+        with pytest.raises(ValueError):
+            sess.queue_set_skill(skill, 3)
+
+
+@pytest.mark.parametrize("game,slot,expected", [
+    ("dragonfall", DF_SLOT, False),
+    ("returns", RT_SLOT, False),
+    ("hongkong", HK_SLOT, True),
+])
+def test_cyberware_affinity_is_hongkong_only(game, slot, expected, tmp_path: Path) -> None:
+    dst = tmp_path / game
+    shutil.copytree(slot, dst, ignore=shutil.ignore_patterns(".*"))
+    sess = SaveSession.open(dst)
+    c = sess.character()
+    assert c is not None
+    assert ("cyberware_affinity" in c.available_skills) is expected
+    if not expected:
+        with pytest.raises(ValueError):
+            sess.queue_set_skill("cyberware_affinity", 3)
+
+
 # --------------------------------------------------------------------------- #
 # Inventory editor (game-agnostic; exercised against HK)                      #
 # --------------------------------------------------------------------------- #

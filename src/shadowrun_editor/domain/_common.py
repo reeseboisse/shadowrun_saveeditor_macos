@@ -97,7 +97,7 @@ ATTRIBUTES: dict[str, int] = {
 }
 
 
-# Skills (Skills message, tags 1-19 + 26-28; etiquettes are 20-25, 29-31)
+# Skills (Skills message, tags 1-19 + 26-28 + 32; etiquettes are 20-25, 29-31)
 SKILLS: dict[str, int] = {
     "ranged_combat":     1,
     "close_combat":      2,
@@ -121,7 +121,22 @@ SKILLS: dict[str, int] = {
     "chi_casting":       26,
     "drain_resistance":  27,
     "drone_combat":      28,
+    # HK-only. The Skills message declares this field only in Hong Kong's
+    # schema (absent from Returns/Dragonfall). Gated to HK in that adapter's
+    # AVAILABLE_SKILLS; kept here so it reads/round-trips on any HK save.
+    "cyberware_affinity": 32,
 }
+
+# Fields that exist in the Skills message but the games never expose for
+# karma investment. They're 0 on every player snapshot across all three
+# titles' reference corpus — including a fully-built Hong Kong endgame
+# character — and there's no in-game skill bar for them: the HBS games
+# route those checks through attributes (Strength/Quickness) and
+# Charisma + Etiquettes instead. They stay in SKILLS so any save reads and
+# round-trips cleanly, but no adapter offers them as editable (a slider
+# that does nothing is worse than no slider). Contrast dodge/biotech, which
+# ARE real player skills and do carry values.
+NON_PLAYER_SKILLS: frozenset[str] = frozenset({"athletics", "negotiation", "stealth"})
 
 
 # --------------------------------------------------------------------------- #

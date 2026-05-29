@@ -402,7 +402,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=_make_named_int_edit_cmd("set_attribute", "set_attribute", "attribute"))
 
     sp = sub.add_parser("set-skill", help="Set a player skill rating")
-    sp.add_argument("skill", choices=sorted(df.SKILLS.keys()))
+    # Offer every real skill tag but not the non-player ones (athletics/
+    # negotiation/stealth) — they're inert Skills-message fields no title
+    # lets you invest in. Game-specific skills (chi_casting, cyberware_
+    # affinity) stay available since the CLI is game-agnostic.
+    skill_choices = sorted(set(df.SKILLS) - df.NON_PLAYER_SKILLS)
+    sp.add_argument("skill", choices=skill_choices)
     sp.add_argument("value", type=int)
     _edit_common(sp)
     sp.set_defaults(func=_make_named_int_edit_cmd("set_skill", "set_skill", "skill"))
