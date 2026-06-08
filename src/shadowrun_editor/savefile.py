@@ -39,6 +39,20 @@ _GAME_MARKERS: list[tuple[str, list[bytes]]] = [
     ]),
 ]
 
+# Folder-name markers used as a fallback when the in-bytes title doesn't
+# match (UGC / user-made campaigns embed the campaign's own title string, so
+# the byte scan misses; but the save still lives under the same per-engine
+# install root: each game keeps its own Saves folder). The fragments here
+# are matched case-insensitively against any component of the file's full
+# path. Order matters — "Hong Kong" must be checked before "Dragonfall" /
+# "Returns" so a path that somehow contains multiple still picks the most
+# specific engine root.
+_GAME_PATH_MARKERS: list[tuple[str, list[str]]] = [
+    ("hongkong",   ["shadowrun hong kong", "hong kong"]),
+    ("dragonfall", ["shadowrun dragonfall", "dragonfall"]),
+    ("returns",    ["shadowrun returns"]),
+]
+
 
 @dataclass
 class SaveSlot:
@@ -55,18 +69,40 @@ class SaveSlot:
         return [self.sav_path, *self.srt_paths]
 
 
-def detect_game(data: bytes) -> str:
-    """Sniff the game id from the bytes of a .sav file."""
+def detect_game(data: bytes, path: str | Path | None = None) -> str:
+    """Identify which engine wrote this save.
+
+    Primary signal is the title string the engine embedded in the file
+    (works for every stock campaign). When that fails — overwhelmingly the
+    UGC / user-made-campaign case, where the title field carries the
+    campaign's own name — fall back to the file's path: each game keeps its
+    own Saves folder, so a save under ``…/Shadowrun Hong Kong/Saves/…`` is a
+    Hong Kong engine save regardless of which campaign produced it. Returns
+    ``"unknown"`` only when both signals miss."""
     head = data[:65536]
     for game, markers in _GAME_MARKERS:
         for marker in markers:
             if marker in head:
                 return game
+    if path is not None:
+        return detect_game_from_path(path)
+    return "unknown"
+
+
+def detect_game_from_path(path: str | Path) -> str:
+    """Match the file's path components against the per-engine save-folder
+    markers. Case-insensitive (macOS save folders are typically case-
+    insensitive but we don't want to depend on that)."""
+    parts = [p.lower() for p in Path(path).expanduser().parts]
+    for game, fragments in _GAME_PATH_MARKERS:
+        for frag in fragments:
+            if any(frag in part for part in parts):
+                return game
     return "unknown"
 
 
 def detect_game_from_file(path: str | Path) -> str:
-    return detect_game(Path(path).read_bytes())
+    return detect_game(Path(path).read_bytes(), path=path)
 
 
 def scan_folder(folder: str | Path, *, recursive: bool = True, max_depth: int = 4) -> list[SaveSlot]:

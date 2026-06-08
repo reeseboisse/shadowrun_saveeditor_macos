@@ -283,7 +283,11 @@ class SaveSession:
         self.slot = slot
         # Read the .sav eagerly — needed for game detection and the summary.
         sav_bytes = slot.sav_path.read_bytes()
-        self.game = detect_game(sav_bytes)
+        # Pass the path so detection falls back to per-engine save-folder
+        # matching for UGC saves (stock campaigns are detected by their title
+        # bytes; user-made campaigns embed the campaign's own title and need
+        # the folder-based fallback).
+        self.game = detect_game(sav_bytes, path=slot.sav_path)
         # Per-game adapter for editing operations; None for unsupported games
         # (the picker still lists those saves but every queue_* raises).
         self._adapter = _ADAPTERS.get(self.game)

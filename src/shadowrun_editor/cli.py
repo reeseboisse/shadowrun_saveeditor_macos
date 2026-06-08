@@ -181,7 +181,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             return 1
         p = sav
     data = p.read_bytes()
-    game = detect_game(data)
+    game = detect_game(data, path=p)
     print(f"File:   {p}")
     print(f"Game:   {game}")
     print(f"Size:   {len(data):,} bytes")
@@ -360,7 +360,7 @@ def cmd_donate_to_alice_fund(args: argparse.Namespace) -> int:
     """Dragonfall-only edit. Refuse on Returns/HK rather than silently
     no-op'ing (Global_AliceFunds doesn't exist in those campaigns)."""
     slot = _resolve_slot(args.slot)
-    game = detect_game(slot.sav_path.read_bytes())
+    game = detect_game(slot.sav_path.read_bytes(), path=slot.sav_path)
     if game != "dragonfall":
         print(
             f"error: donate-to-alice-fund is a Dragonfall-only edit; "

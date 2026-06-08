@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadowrun_editor"
-version = "0.3.1"
+version = "0.3.2"
 description = "Shadowrun trilogy save game editor"
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-or-later" }
